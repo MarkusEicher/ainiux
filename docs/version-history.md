@@ -4,7 +4,7 @@ This compact timeline moves release material out of the landing page. It describ
 
 | Version | Main result |
 | --- | --- |
-| Next | Interactive Agent replaces restricted Plan with independent full-authority Act/Lead model modes, bounded tool-free handoffs, project-persisted mode settings, `/lead`, and matching WebUI/control API behavior; one-shot Plan is retired; glob and grep search any live workspace file type while index/symbol/outline stay on the code index |
+| Next | Interactive Agent replaces restricted Plan with independent full-authority Act/Lead model modes, bounded tool-free handoffs, project-persisted mode settings, `/lead`, and matching WebUI/control API behavior; one-shot Plan is retired; glob and grep search any live workspace file type while index/symbol/outline stay on the code index; independent in-turn tools share a default 4-thread pool (`max_parallel_agents`, cap 32) |
 | v0.0 | Repository, C++17/Makefile build, tests, sanitizer, and leak-check foundation |
 | v0.1 | Script-friendly OpenAI-compatible CLI, streaming, and LM Studio profile; its early browser-mode note was planning only and is superseded by the shipped [browser controller](web-mode.md) |
 | v0.2 | Line-oriented REPL and JSON chat persistence foundations |

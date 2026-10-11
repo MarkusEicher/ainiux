@@ -27,6 +27,8 @@ struct AgentLoopLimits {
     std::size_t max_scripted_turns = 500;
     int transport_attempts = 3;  // total attempts per request, not "extra" retries
     bool interactive = false;    // interactive: ask to continue at turn cap
+    // Concurrent independent tool executions in one model round (1..32).
+    std::size_t max_parallel_tools = 4;
 };
 
 struct AgentLoopState {

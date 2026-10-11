@@ -6,11 +6,13 @@
 #include "mcp/arg_rewrite.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <mutex>
 #include <sstream>
 #include <utility>
 
@@ -55,6 +57,7 @@ SessionRuntimeOptions make_session_runtime_options(
     options.compact_strategy = context.options.agent_compact_strategy;
     options.compact_limit = context.options.agent_compact_limit;
     options.max_agent_turns = context.options.agent_max_turns;
+    options.max_parallel_tools = context.options.max_parallel_agents;
     options.index_mode =
         context.options.disable_indexing
             ? SessionRuntimeOptions::IndexMode::Disabled
@@ -1520,6 +1523,9 @@ Error AgentSessionRuntime::prepare(const provider::RequestContext& context,
     limits_.max_scripted_turns = options_.max_agent_turns > 0
                                      ? static_cast<std::size_t>(options_.max_agent_turns)
                                      : 500U;
+    if (options_.max_parallel_tools < 1) limits_.max_parallel_tools = 1;
+    else if (options_.max_parallel_tools > 32) limits_.max_parallel_tools = 32;
+    else limits_.max_parallel_tools = static_cast<std::size_t>(options_.max_parallel_tools);
     known_tools_ = known_tool_names(tools_);
     publish_preparation(PreparationPhase::ToolSetup, true, phase_started);
 
@@ -2675,7 +2681,8 @@ SessionTurnResult AgentSessionRuntime::run_user_turn(
 
     const std::size_t log_width = terminal_column_count();
     const std::size_t tool_line_width = log_width > 8 ? log_width : 8;
-    std::size_t turn_tool_index = 0;
+    std::atomic<std::size_t> turn_tool_index{0};
+    std::mutex tool_executor_mutex;
     std::size_t active_round_id = 0;
     constexpr std::size_t kWorkingNoticeId =
         std::numeric_limits<std::size_t>::max() - 1;
@@ -2692,8 +2699,12 @@ SessionTurnResult AgentSessionRuntime::run_user_turn(
     };
     auto executor = [&](const std::string& name, const std::string& arguments_json,
                         runtime::CancellationToken token) {
-        ++turn_tool_index;
-        hide_live_notice();
+        std::size_t tool_index = 0;
+        {
+            std::lock_guard<std::mutex> lock(tool_executor_mutex);
+            tool_index = turn_tool_index.fetch_add(1) + 1;
+            hide_live_notice();
+        }
         const auto execution_started = std::chrono::steady_clock::now();
         const long long wait_before =
             interactive_wait_ms_.load(std::memory_order_relaxed);
@@ -2701,14 +2712,15 @@ SessionTurnResult AgentSessionRuntime::run_user_turn(
         // "streaming..." placeholder while the tool (or the next model round) runs.
         {
             std::ostringstream running;
-            running << turn_tool_index << ": " << (name.empty() ? "tool" : name) << '('
+            running << tool_index << ": " << (name.empty() ? "tool" : name) << '('
                     << compact_tool_args_preview(arguments_json,
                                                  tool_line_width > 24 ? tool_line_width - 24 : 8)
                     << ") …";
             const std::string running_line = clip_to_cells(running.str(), tool_line_width);
+            std::lock_guard<std::mutex> lock(tool_executor_mutex);
             progress(running_line);
             structured_progress({AgentProgressAction::Upsert, AgentProgressKind::Tool,
-                                 active_round_id, turn_tool_index, running_line, 0});
+                                 active_round_id, tool_index, running_line, 0});
         }
         std::string body = tools_.execute(name, arguments_json, token);
         const long long wait_after =
@@ -2720,20 +2732,23 @@ SessionTurnResult AgentSessionRuntime::run_user_turn(
             wait_before, wait_after);
         const long long completed_ms = now_unix_ms();
         const std::string line =
-            format_compact_tool_line(turn_tool_index, name, arguments_json, body,
+            format_compact_tool_line(tool_index, name, arguments_json, body,
                                      execution_ms, tool_line_width);
-        result.compact_tool_lines.push_back(line);
-        result.compact_tool_line_ms.push_back(completed_ms);
-        progress(line);
-        structured_progress({AgentProgressAction::Commit, AgentProgressKind::Tool,
-                             active_round_id, turn_tool_index, line, completed_ms});
-        if (!options_.interactive && !context.options.quiet) {
-            std::cerr << line << "\n";
-        }
-        if (session_store_.is_open()) {
-            (void)session_store_.append_message(
-                "tool", line, name, compact_tool_status(body) == "ok",
-                compact_tool_args_preview(arguments_json));
+        {
+            std::lock_guard<std::mutex> lock(tool_executor_mutex);
+            result.compact_tool_lines.push_back(line);
+            result.compact_tool_line_ms.push_back(completed_ms);
+            progress(line);
+            structured_progress({AgentProgressAction::Commit, AgentProgressKind::Tool,
+                                 active_round_id, tool_index, line, completed_ms});
+            if (!options_.interactive && !context.options.quiet) {
+                std::cerr << line << "\n";
+            }
+            if (session_store_.is_open()) {
+                (void)session_store_.append_message(
+                    "tool", line, name, compact_tool_status(body) == "ok",
+                    compact_tool_args_preview(arguments_json));
+            }
         }
         return body;
     };

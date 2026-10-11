@@ -41,6 +41,13 @@ methodology.
 `definitions()`, so models are steered to `edit`. Exact-name calls from older
 transcripts or Codex-trained muscle memory still run.
 
+Independent tools in one model round share a worker pool of 4 threads by default
+(`[agent] max_parallel_agents`, range 1 through 32). Consecutive
+`read`/`ls`/`glob`/`grep`/`fetch`/`web_search` calls overlap with each other;
+consecutive `run` calls overlap with each other. Mutations, `index`/`symbol`/`outline`,
+`ask`/`attach`/`goal_met`, and MCP stay exclusive so a later read sees a prior
+edit. Results stay in the model's call order.
+
 ## Removed (not advertised, not executable)
 
 `str_replace`, `git_status`, `git_diff`, `read_symbol`, `read_many` (batching lives on `read.items`), `search_text`, `find`, `list_directory`, `list_dir`, `project_overview`, `get_skeleton`, `search_web`, `read_file`, `run_command`, `edit_file`, `write_file`, `create_directory`, `rename_path`, `remove`, `fetch_url`, `attach_image`, `index_overview`, `file_outline`, `search_symbol`.

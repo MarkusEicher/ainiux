@@ -140,6 +140,9 @@ struct SessionRuntimeOptions {
     // Auto-continuations while a session goal is Active (tool-less FinalText).
     int max_goal_turns = 20;
     int max_agent_turns = 500;
+    // Concurrent independent tools in one model round (1..32). Shared with
+    // security-review workers via agent.max_parallel_agents.
+    int max_parallel_tools = 4;
     // Injected by tests and embedders. Empty uses the active provider/model.
     CompactionSummaryCall summary_call;
     enum class IndexMode {

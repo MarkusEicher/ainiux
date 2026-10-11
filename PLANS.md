@@ -113,7 +113,7 @@ and queried lazily by Agent. Continue tuning it as a navigation aid:
 - tune declaration importance and visibility across scanner languages;
 - enrich text search with the enclosing indexed definition where it is cheap;
 - stress generated files, renames/removals, coalescing, cancellation, and shutdown;
-- measure tool execution before considering bounded read-only parallelism.
+- keep measuring in-turn tool-pool occupancy (`agent.max_parallel_agents`, default 4, cap 32) after the landed consecutive-read and consecutive-run waves.
 
 Acceptance: lexical relevance remains ahead of importance, results are deterministic,
 mutations immediately update the live touched-file view, persistent publication is

@@ -1,6 +1,10 @@
 #include "agent/test_agent_loop.hpp"
 
+#include <atomic>
+#include <chrono>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "agent/agent_loop.hpp"
@@ -830,6 +834,241 @@ void test_batched_reads_reduce_rounds_and_serialized_request_bytes() {
           "one read_many/multi-call round reduces deterministic model rounds and request bytes");
 }
 
+std::string marked_ok(const std::string& mark) {
+    return std::string(R"({"ok":true,"error":null,"data":{"mark":")") + mark +
+           R"("},"warnings":[],"truncated":false,"metadata":{}})";
+}
+
+std::string approval_denied_result() {
+    return R"({"ok":false,"error":{"code":"unsupported_feature","message":"external remove requires user approval"},"data":{},"warnings":[],"truncated":false,"metadata":{}})";
+}
+
+provider::ToolCall named_call(const std::string& id, const std::string& name,
+                              const std::string& mark) {
+    provider::ToolCall call;
+    call.id = id;
+    call.name = name;
+    call.arguments_json = std::string(R"({"path":")") + mark + R"("})";
+    return call;
+}
+
+void note_concurrency(std::atomic<int>& current, std::atomic<int>& max_seen) {
+    const int now = current.fetch_add(1) + 1;
+    int prev = max_seen.load();
+    while (prev < now && !max_seen.compare_exchange_weak(prev, now)) {
+    }
+}
+
+void test_independent_reads_run_in_parallel() {
+    using namespace ainiux::agent;
+    AgentLoopState state;
+    AgentLoopLimits limits;
+    limits.max_parallel_tools = 4;
+    provider::ToolConversation conversation;
+    std::atomic<int> current{0};
+    std::atomic<int> max_seen{0};
+    std::atomic<int> executions{0};
+    auto executor = [&](const std::string&, const std::string& arguments_json,
+                        runtime::CancellationToken) {
+        note_concurrency(current, max_seen);
+        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+        current.fetch_sub(1);
+        executions.fetch_add(1);
+        return marked_ok(arguments_json);
+    };
+    const std::vector<provider::ToolCall> calls = {
+        named_call("r0", "read", "a.cpp"), named_call("r1", "read", "b.cpp"),
+        named_call("r2", "ls", "src"), named_call("r3", "grep", "main")};
+    const AgentRoundOutcome outcome = handle_agent_tool_round(
+        state, limits, chat_context(), conversation, native_round(calls),
+        {"read", "ls", "grep"}, executor);
+    check(outcome.kind == AgentRoundOutcome::Kind::Continue && executions.load() == 4 &&
+              max_seen.load() >= 2 && outcome.tool_results.size() == 4,
+          "independent reads share one round and overlap");
+    check(outcome.tool_results[0].find("a.cpp") != std::string::npos &&
+              outcome.tool_results[1].find("b.cpp") != std::string::npos &&
+              outcome.tool_results[2].find("src") != std::string::npos &&
+              outcome.tool_results[3].find("main") != std::string::npos,
+          "parallel tool results stay in prepared order");
+}
+
+void test_parallel_limit_one_stays_serial() {
+    using namespace ainiux::agent;
+    AgentLoopState state;
+    AgentLoopLimits limits;
+    limits.max_parallel_tools = 1;
+    provider::ToolConversation conversation;
+    std::atomic<int> current{0};
+    std::atomic<int> max_seen{0};
+    auto executor = [&](const std::string&, const std::string&, runtime::CancellationToken) {
+        note_concurrency(current, max_seen);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        current.fetch_sub(1);
+        return ok_result();
+    };
+    const std::vector<provider::ToolCall> calls = {
+        named_call("r0", "read", "a.cpp"), named_call("r1", "read", "b.cpp"),
+        named_call("r2", "read", "c.cpp"), named_call("r3", "read", "d.cpp")};
+    const AgentRoundOutcome outcome = handle_agent_tool_round(
+        state, limits, chat_context(), conversation, native_round(calls), {"read"},
+        executor);
+    check(outcome.kind == AgentRoundOutcome::Kind::Continue && max_seen.load() == 1 &&
+              outcome.tool_calls == 4,
+          "max_parallel_tools=1 keeps independent reads serial");
+}
+
+void test_parallel_pool_respects_limit() {
+    using namespace ainiux::agent;
+    AgentLoopState state;
+    AgentLoopLimits limits;
+    limits.max_parallel_tools = 4;
+    provider::ToolConversation conversation;
+    std::atomic<int> current{0};
+    std::atomic<int> max_seen{0};
+    auto executor = [&](const std::string&, const std::string&, runtime::CancellationToken) {
+        note_concurrency(current, max_seen);
+        std::this_thread::sleep_for(std::chrono::milliseconds(40));
+        current.fetch_sub(1);
+        return ok_result();
+    };
+    std::vector<provider::ToolCall> calls;
+    calls.reserve(8);
+    for (int i = 0; i < 8; ++i)
+        calls.push_back(named_call("r" + std::to_string(i), "read",
+                                   "f" + std::to_string(i) + ".cpp"));
+    const AgentRoundOutcome outcome = handle_agent_tool_round(
+        state, limits, chat_context(), conversation, native_round(calls), {"read"},
+        executor);
+    check(outcome.kind == AgentRoundOutcome::Kind::Continue && max_seen.load() >= 2 &&
+              max_seen.load() <= 4 && outcome.tool_calls == 8,
+          "eight reads honor the default four-thread cap");
+}
+
+void test_mutation_breaks_read_waves() {
+    using namespace ainiux::agent;
+    AgentLoopState state;
+    AgentLoopLimits limits;
+    limits.max_parallel_tools = 4;
+    provider::ToolConversation conversation;
+    std::mutex mutex;
+    struct Span {
+        std::string name;
+        std::chrono::steady_clock::time_point start;
+        std::chrono::steady_clock::time_point end;
+    };
+    std::vector<Span> spans;
+    auto executor = [&](const std::string& name, const std::string&,
+                        runtime::CancellationToken) {
+        const auto start = std::chrono::steady_clock::now();
+        std::this_thread::sleep_for(std::chrono::milliseconds(40));
+        const auto end = std::chrono::steady_clock::now();
+        std::lock_guard<std::mutex> lock(mutex);
+        spans.push_back({name, start, end});
+        return marked_ok(name);
+    };
+    const std::vector<provider::ToolCall> calls = {
+        named_call("a", "read", "a.cpp"), named_call("b", "read", "b.cpp"),
+        named_call("w", "write", "out.txt"), named_call("c", "grep", "main"),
+        named_call("d", "ls", ".")};
+    const AgentRoundOutcome outcome = handle_agent_tool_round(
+        state, limits, chat_context(), conversation, native_round(calls),
+        {"read", "write", "grep", "ls"}, executor);
+    check(outcome.kind == AgentRoundOutcome::Kind::Continue && spans.size() == 5 &&
+              outcome.tool_results[2].find("write") != std::string::npos,
+          "mixed round keeps write results in prepared order");
+    auto overlaps = [](const Span& left, const Span& right) {
+        return left.start < right.end && right.start < left.end;
+    };
+    const Span* write = nullptr;
+    std::vector<const Span*> reads;
+    for (const Span& span : spans) {
+        if (span.name == "write") write = &span;
+        else reads.push_back(&span);
+    }
+    bool write_overlapped = false;
+    if (write != nullptr) {
+        for (const Span* read : reads) {
+            if (overlaps(*write, *read)) write_overlapped = true;
+        }
+    }
+    check(write != nullptr && !write_overlapped,
+          "write stays exclusive of neighboring reads");
+}
+
+void test_run_does_not_overlap_following_read() {
+    using namespace ainiux::agent;
+    AgentLoopState state;
+    AgentLoopLimits limits;
+    limits.max_parallel_tools = 4;
+    provider::ToolConversation conversation;
+    std::atomic<int> current{0};
+    std::atomic<int> max_seen{0};
+    auto executor = [&](const std::string&, const std::string&, runtime::CancellationToken) {
+        note_concurrency(current, max_seen);
+        std::this_thread::sleep_for(std::chrono::milliseconds(40));
+        current.fetch_sub(1);
+        return ok_result();
+    };
+    const std::vector<provider::ToolCall> calls = {
+        named_call("run0", "run", "build"), named_call("read0", "read", "out.txt")};
+    const AgentRoundOutcome outcome = handle_agent_tool_round(
+        state, limits, chat_context(), conversation, native_round(calls),
+        {"run", "read"}, executor);
+    check(outcome.kind == AgentRoundOutcome::Kind::Continue && max_seen.load() == 1,
+          "run stays exclusive of a following read");
+}
+
+void test_independent_runs_overlap() {
+    using namespace ainiux::agent;
+    AgentLoopState state;
+    AgentLoopLimits limits;
+    limits.max_parallel_tools = 4;
+    provider::ToolConversation conversation;
+    std::atomic<int> current{0};
+    std::atomic<int> max_seen{0};
+    auto executor = [&](const std::string&, const std::string&, runtime::CancellationToken) {
+        note_concurrency(current, max_seen);
+        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+        current.fetch_sub(1);
+        return ok_result();
+    };
+    const std::vector<provider::ToolCall> calls = {
+        named_call("run0", "run", "a"), named_call("run1", "run", "b"),
+        named_call("run2", "run", "c"), named_call("run3", "run", "d")};
+    const AgentRoundOutcome outcome = handle_agent_tool_round(
+        state, limits, chat_context(), conversation, native_round(calls), {"run"},
+        executor);
+    check(outcome.kind == AgentRoundOutcome::Kind::Continue && max_seen.load() >= 2 &&
+              outcome.tool_calls == 4,
+          "independent run calls share a worker pool");
+}
+
+void test_approval_denial_cancels_later_tools_after_parallel_wave() {
+    using namespace ainiux::agent;
+    AgentLoopState state;
+    AgentLoopLimits limits;
+    limits.max_parallel_tools = 4;
+    provider::ToolConversation conversation;
+    std::atomic<int> executions{0};
+    auto executor = [&](const std::string& name, const std::string&,
+                        runtime::CancellationToken) {
+        executions.fetch_add(1);
+        if (name == "write") return approval_denied_result();
+        return ok_result();
+    };
+    const std::vector<provider::ToolCall> calls = {
+        named_call("r0", "read", "a.cpp"), named_call("r1", "read", "b.cpp"),
+        named_call("w0", "write", "out.txt"), named_call("r2", "read", "c.cpp")};
+    const AgentRoundOutcome outcome = handle_agent_tool_round(
+        state, limits, chat_context(), conversation, native_round(calls),
+        {"read", "write"}, executor);
+    check(outcome.kind == AgentRoundOutcome::Kind::FinalText &&
+              outcome.notice.find("cancelled by user") != std::string::npos &&
+              executions.load() == 3 && outcome.tool_results.size() == 4 &&
+              outcome.tool_results[3].find("declined approval") != std::string::npos,
+          "approval denial after a read wave cancels later tools");
+}
+
 }  // namespace
 
 void run_all() {
@@ -845,6 +1084,13 @@ void run_all() {
     test_request_only_context_is_removed_without_history_loss();
     test_agent_turn_images_on_seed_and_follow_up_then_strip();
     test_batched_reads_reduce_rounds_and_serialized_request_bytes();
+    test_independent_reads_run_in_parallel();
+    test_parallel_limit_one_stays_serial();
+    test_parallel_pool_respects_limit();
+    test_mutation_breaks_read_waves();
+    test_run_does_not_overlap_following_read();
+    test_independent_runs_overlap();
+    test_approval_denial_cancels_later_tools_after_parallel_wave();
 }
 
 }  // namespace ainiux::test::agent_loop

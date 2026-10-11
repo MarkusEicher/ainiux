@@ -1,9 +1,11 @@
 #include "agent/agent_loop.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <thread>
+#include <utility>
 
 #include "agent/tools.hpp"
 #include "json/json.hpp"
@@ -142,6 +144,19 @@ bool tool_result_is_approval_denial(const std::string& result) {
             message_text.find("user denied") != std::string::npos);
 }
 
+// Consecutive tools in the same group may share a worker pool. Read-only I/O
+// stays in one group so a later read does not overlap a `run` that writes.
+// Mutations, index snapshots, session/vision tools, and MCP stay exclusive.
+enum class ToolParallelGroup { Exclusive, Read, Run };
+
+ToolParallelGroup tool_parallel_group(const std::string& name) {
+    if (name == "read" || name == "ls" || name == "glob" || name == "grep" ||
+        name == "fetch" || name == "web_search")
+        return ToolParallelGroup::Read;
+    if (name == "run") return ToolParallelGroup::Run;
+    return ToolParallelGroup::Exclusive;
+}
+
 AgentRoundOutcome execute_prepared_calls(AgentLoopState& state,
                                          const AgentLoopLimits& limits,
                                          const provider::RequestContext& context,
@@ -191,28 +206,30 @@ AgentRoundOutcome execute_prepared_calls(AgentLoopState& state,
     state.dangling_call_ids.clear();
     for (const PreparedToolCall& call : prepared) state.dangling_call_ids.push_back(call.id);
 
-    std::vector<std::string> results;
-    results.reserve(prepared.size());
-    std::size_t failures = 0;
-    bool approval_declined = false;
-    for (const PreparedToolCall& call : prepared) {
-        if (cancellation.cancelled()) {
-            const std::string cancelled = cancelled_tool_result_json("Tool was not executed.");
-            failures += prepared.size() - results.size();
-            while (results.size() < prepared.size()) results.push_back(cancelled);
-            append_prepared_tool_results(context, conversation, prepared, results);
-            state.dangling_call_ids.clear();
-            outcome.kind = AgentRoundOutcome::Kind::Error;
-            outcome.error = {ErrorCode::Cancelled, "agent tool round cancelled"};
-            outcome.tool_results = std::move(results);
-            outcome.failed_tool_calls = failures;
-            return outcome;
+    std::size_t parallel_limit = limits.max_parallel_tools;
+    if (parallel_limit < 1) parallel_limit = 1;
+    if (parallel_limit > 32) parallel_limit = 32;
+
+    std::vector<std::string> results(prepared.size());
+    std::atomic<std::size_t> failures{0};
+    std::atomic<bool> approval_declined{false};
+    std::atomic<bool> round_cancelled{false};
+
+    auto execute_one = [&](std::size_t index) {
+        if (round_cancelled.load() || cancellation.cancelled()) {
+            results[index] = cancelled_tool_result_json("Tool was not executed.");
+            failures.fetch_add(1);
+            return;
         }
-        std::string result;
-        if (approval_declined) {
-            result = cancelled_tool_result_json(
+        if (approval_declined.load()) {
+            results[index] = cancelled_tool_result_json(
                 "Tool was not executed after the user declined approval.");
-        } else if (call.arguments_invalid) {
+            failures.fetch_add(1);
+            return;
+        }
+        const PreparedToolCall& call = prepared[index];
+        std::string result;
+        if (call.arguments_invalid) {
             result = invalid_arguments_tool_result(
                 call.name.empty() ? std::string("unknown") : call.name,
                 call.parsed.error.ok() ? "tool arguments must be a JSON object"
@@ -224,17 +241,80 @@ AgentRoundOutcome execute_prepared_calls(AgentLoopState& state,
             // Never automatically re-run a failed tool; one execution only.
             result = executor(call.name, call.original_arguments, cancellation);
         }
-        if (!tool_result_ok(result)) ++failures;
-        if (tool_result_is_approval_denial(result)) approval_declined = true;
-        results.push_back(std::move(result));
+        if (!tool_result_ok(result)) failures.fetch_add(1);
+        if (tool_result_is_approval_denial(result)) approval_declined.store(true);
+        results[index] = std::move(result);
+    };
+
+    auto run_parallel = [&](std::size_t begin, std::size_t end) {
+        const std::size_t count = end - begin;
+        const std::size_t workers = std::min(parallel_limit, count);
+        if (workers <= 1) {
+            for (std::size_t index = begin; index < end; ++index) execute_one(index);
+            return;
+        }
+        std::atomic<std::size_t> next{begin};
+        std::vector<std::thread> threads;
+        threads.reserve(workers);
+        struct JoinThreads {
+            std::vector<std::thread>& threads;
+            ~JoinThreads() {
+                for (std::thread& thread : threads)
+                    if (thread.joinable()) thread.join();
+            }
+        } join{threads};
+        for (std::size_t worker = 0; worker < workers; ++worker) {
+            threads.emplace_back([&] {
+                for (;;) {
+                    const std::size_t index = next.fetch_add(1);
+                    if (index >= end) return;
+                    execute_one(index);
+                }
+            });
+        }
+    };
+
+    std::size_t index = 0;
+    while (index < prepared.size()) {
+        if (cancellation.cancelled()) {
+            round_cancelled.store(true);
+            while (index < prepared.size()) {
+                execute_one(index);
+                ++index;
+            }
+            break;
+        }
+        const ToolParallelGroup group = tool_parallel_group(prepared[index].name);
+        if (parallel_limit <= 1 || group == ToolParallelGroup::Exclusive) {
+            execute_one(index);
+            ++index;
+            continue;
+        }
+        std::size_t end = index + 1;
+        while (end < prepared.size() && tool_parallel_group(prepared[end].name) == group)
+            ++end;
+        run_parallel(index, end);
+        index = end;
+    }
+
+    if (cancellation.cancelled() || round_cancelled.load()) {
+        append_prepared_tool_results(context, conversation, prepared, results);
+        state.dangling_call_ids.clear();
+        outcome.kind = AgentRoundOutcome::Kind::Error;
+        outcome.error = {ErrorCode::Cancelled, "agent tool round cancelled"};
+        outcome.tool_results = std::move(results);
+        outcome.failed_tool_calls = failures.load();
+        return outcome;
     }
 
     append_prepared_tool_results(context, conversation, prepared, results);
     state.dangling_call_ids.clear();
     outcome.tool_results = results;
-    outcome.failed_tool_calls = failures;
+    outcome.failed_tool_calls = failures.load();
+    const bool approval_declined_now = approval_declined.load();
+    const std::size_t failure_count = failures.load();
 
-    if (approval_declined) {
+    if (approval_declined_now) {
         state.consecutive_all_failed_turns = 0;
         state.last_fingerprint.clear();
         state.identical_repeat_count = 0;
@@ -245,7 +325,7 @@ AgentRoundOutcome execute_prepared_calls(AgentLoopState& state,
         return outcome;
     }
 
-    if (failures == prepared.size() && !prepared.empty()) {
+    if (failure_count == prepared.size() && !prepared.empty()) {
         ++state.consecutive_all_failed_turns;
         // Identical-call soft/hard ladder owns repeated same-call failures.
         // Consecutive-failure abort applies when the model keeps failing with
