@@ -143,7 +143,7 @@ The gate owns copied request/response data and opaque IDs, validates every
 answer before waking the tool worker, and remains pending after malformed or
 stale client input. Accepted answers flow through the ordinary tool result and
 conversation transcript; no second persistence schema is introduced.
-- Agent git policy is broader than security-review so a user-approved Ask can actually run (still no shell, still common path/safety checks). Smart auto-allows read-only porcelain (`status`/`diff`/`log`/`show`/`rev-list`/`remote -v` and listing forms) after skipping `git -c` pager globals so a model that copies the runner's injected `core.pager=cat` does not get an Ask. `git -c alias.*` and `git config` stay denied.
+- Agent git policy is broader than security-review so a user-approved Ask can actually run (still no shell). Smart auto-allows read-only porcelain (`status`/`diff`/`log`/`show`/`rev-list`/`remote -v`, `check-ignore`, `ls-files`, and listing forms) after skipping `git -c` pager globals so a model that copies the runner's injected `core.pager=cat` does not get an Ask. Git pathspecs are queries rather than opened files, so names such as `.venv` and `.ainiux-pr` auto-allow; `git -C` and native `ls`/`cat` of `.ainiux-pr` stay denied. `run` common-safety does not scan every argv token as a path (`g++ -I../include` is not traversal). `git -c alias.*` and `git config` stay denied.
 
 ## Workspace path containment for agent writes
 

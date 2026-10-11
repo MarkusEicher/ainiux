@@ -604,7 +604,7 @@ bool git_write_or_exec_option(const std::string& argument) {
 
 ReadOnlyCommandAssessment assess_git_globals(const std::vector<std::string>& args,
                                              std::size_t sub_index,
-                                             std::vector<std::string>& paths) {
+                                             std::vector<std::string>& chdir) {
     for (std::size_t i = 1; i < sub_index;) {
         const std::string& argument = args[i];
         if (argument == "--") {
@@ -623,13 +623,13 @@ ReadOnlyCommandAssessment assess_git_globals(const std::vector<std::string>& arg
         if (argument == "-C") {
             if (i + 1 >= sub_index || args[i + 1].empty())
                 return reject("git -C requires a path");
-            paths.push_back(args[i + 1]);
+            chdir.push_back(args[i + 1]);
             i += 2;
             continue;
         }
         if (argument.size() > 2 && argument[0] == '-' && argument[1] == 'C' &&
             argument[2] != '-') {
-            paths.push_back(argument.substr(2));
+            chdir.push_back(argument.substr(2));
             ++i;
             continue;
         }
@@ -665,7 +665,10 @@ ReadOnlyCommandAssessment assess_git_revision_walk(const std::vector<std::string
         if (git_write_or_exec_option(argument))
             return reject("git option can write files or invoke external tooling: " +
                           argument);
-        if (argument.front() != '-') continue;
+        if (argument.front() != '-') {
+            paths.push_back(argument);
+            continue;
+        }
     }
     return accept(std::move(paths));
 }
@@ -675,16 +678,24 @@ ReadOnlyCommandAssessment assess_git(const std::vector<std::string>& args) {
     if (sub_index >= args.size())
         return reject("git requires an allowlisted read-only subcommand");
     const std::string& subcommand = args[sub_index];
+    std::vector<std::string> chdir;
     std::vector<std::string> paths;
-    const ReadOnlyCommandAssessment globals = assess_git_globals(args, sub_index, paths);
+    const ReadOnlyCommandAssessment globals =
+        assess_git_globals(args, sub_index, chdir);
     if (!globals.vetted) return globals;
+    auto finish = [&](ReadOnlyCommandAssessment inner) {
+        if (!inner.vetted) return inner;
+        inner.chdir_operands = chdir;
+        inner.git_query_pathspecs = true;
+        return inner;
+    };
 
     if (subcommand == "version" || subcommand == "--version") {
         for (std::size_t i = sub_index + 1; i < args.size(); ++i)
             if (args[i] != "--build-options")
                 return reject("git version option is not a vetted read-only form: " +
                               args[i]);
-        return accept(std::move(paths));
+        return finish(accept(std::move(paths)));
     }
 
     if (subcommand == "status") {
@@ -700,7 +711,10 @@ ReadOnlyCommandAssessment assess_git(const std::vector<std::string>& args) {
                 continue;
             }
             if (argument.empty()) return reject("git status rejected an empty argument");
-            if (argument.front() != '-') continue;
+            if (argument.front() != '-') {
+                paths.push_back(argument);
+                continue;
+            }
             if (argument == "-s" || argument == "--short" ||
                 argument == "-b" || argument == "--branch" || argument == "-sb" ||
                 argument == "-bs" || argument == "-v" || argument == "-vv" ||
@@ -718,7 +732,7 @@ ReadOnlyCommandAssessment assess_git(const std::vector<std::string>& args) {
             return reject("git status option is not a vetted read-only form: " +
                           argument);
         }
-        return accept(std::move(paths));
+        return finish(accept(std::move(paths)));
     }
 
     if (subcommand == "diff") {
@@ -734,7 +748,10 @@ ReadOnlyCommandAssessment assess_git(const std::vector<std::string>& args) {
                 continue;
             }
             if (argument.empty()) return reject("git diff rejected an empty argument");
-            if (argument.front() != '-') continue;
+            if (argument.front() != '-') {
+                paths.push_back(argument);
+                continue;
+            }
             if (argument == "--cached" || argument == "--staged" || argument == "--stat" ||
                 argument == "--numstat" || argument == "--shortstat" ||
                 argument == "--name-only" || argument == "--name-status" ||
@@ -753,7 +770,7 @@ ReadOnlyCommandAssessment assess_git(const std::vector<std::string>& args) {
             }
             return reject("git diff option is not a vetted read-only form: " + argument);
         }
-        return accept(std::move(paths));
+        return finish(accept(std::move(paths)));
     }
 
     if (subcommand == "ls-files") {
@@ -775,18 +792,20 @@ ReadOnlyCommandAssessment assess_git(const std::vector<std::string>& args) {
                 argument == "--full-name" || argument == "--exclude-standard") {
                 continue;
             }
-            return reject("git ls-files option is not a vetted read-only form: " +
-                          argument);
+            if (!argument.empty() && argument[0] == '-')
+                return reject("git ls-files option is not a vetted read-only form: " +
+                              argument);
+            paths.push_back(argument);
         }
-        return accept(std::move(paths));
+        return finish(accept(std::move(paths)));
     }
 
     if (subcommand == "log" || subcommand == "show" || subcommand == "rev-list" ||
         subcommand == "shortlog" || subcommand == "blame" || subcommand == "ls-tree")
-        return assess_git_revision_walk(args, sub_index, std::move(paths));
+        return finish(assess_git_revision_walk(args, sub_index, std::move(paths)));
 
     if (subcommand == "rev-parse")
-        return assess_git_revision_walk(args, sub_index, std::move(paths));
+        return finish(assess_git_revision_walk(args, sub_index, std::move(paths)));
 
     if (subcommand == "check-ignore") {
         bool after_double_dash = false;
@@ -809,7 +828,7 @@ ReadOnlyCommandAssessment assess_git(const std::vector<std::string>& args) {
                               argument);
             paths.push_back(argument);
         }
-        return accept(std::move(paths));
+        return finish(accept(std::move(paths)));
     }
 
     if (subcommand == "remote") {
@@ -818,7 +837,7 @@ ReadOnlyCommandAssessment assess_git(const std::vector<std::string>& args) {
             if (args[i] == "-v" || args[i] == "--verbose") continue;
             rest.push_back(args[i]);
         }
-        if (rest.empty()) return accept(std::move(paths));
+        if (rest.empty()) return finish(accept(std::move(paths)));
         if (rest[0] == "get-url") {
             for (std::size_t i = 1; i < rest.size(); ++i) {
                 if (rest[i] == "--push" || rest[i] == "--all") continue;
@@ -826,7 +845,7 @@ ReadOnlyCommandAssessment assess_git(const std::vector<std::string>& args) {
                     return reject("git remote get-url option is not a vetted read-only form: " +
                                   rest[i]);
             }
-            return accept(std::move(paths));
+            return finish(accept(std::move(paths)));
         }
         if (rest[0] == "show") {
             bool no_fetch = false;
@@ -841,7 +860,7 @@ ReadOnlyCommandAssessment assess_git(const std::vector<std::string>& args) {
             }
             if (!no_fetch)
                 return reject("git remote show contacts the remote unless -n is given");
-            return accept(std::move(paths));
+            return finish(accept(std::move(paths)));
         }
         return reject("git remote subcommand is not a vetted read-only form: " + rest[0]);
     }
@@ -886,7 +905,7 @@ ReadOnlyCommandAssessment assess_git(const std::vector<std::string>& args) {
             if (!allow_pattern)
                 return reject("git branch create/rename is not a vetted read-only form");
         }
-        return accept(std::move(paths));
+        return finish(accept(std::move(paths)));
     }
 
     if (subcommand == "tag") {
@@ -922,7 +941,7 @@ ReadOnlyCommandAssessment assess_git(const std::vector<std::string>& args) {
             if (!allow_pattern)
                 return reject("git tag create is not a vetted read-only form");
         }
-        return accept(std::move(paths));
+        return finish(accept(std::move(paths)));
     }
 
     if (subcommand == "stash") {
@@ -931,13 +950,13 @@ ReadOnlyCommandAssessment assess_git(const std::vector<std::string>& args) {
         const std::string& action = args[sub_index + 1];
         if (action != "list" && action != "show")
             return reject("git stash " + action + " is not a vetted read-only form");
-        return assess_git_revision_walk(args, sub_index + 1, std::move(paths));
+        return finish(assess_git_revision_walk(args, sub_index + 1, std::move(paths)));
     }
 
     if (subcommand == "merge-base" || subcommand == "describe" ||
         subcommand == "name-rev" || subcommand == "show-ref" ||
         subcommand == "for-each-ref" || subcommand == "cat-file")
-        return assess_git_revision_walk(args, sub_index, std::move(paths));
+        return finish(assess_git_revision_walk(args, sub_index, std::move(paths)));
 
     return reject("git subcommand is not a vetted read-only form: " + subcommand);
 }

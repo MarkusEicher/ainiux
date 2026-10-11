@@ -538,6 +538,12 @@ Error enforce_common_safety(const std::vector<std::string>& args,
     // shell syntax. Do not reject ';' '|' etc. here — that blocked legitimate
     // payloads such as python3 -c "import x; print(1)". Unquoted operators in
     // the raw command string are rejected in parse_command instead.
+    //
+    // Do not treat every token as a filesystem path. Scanning for `..` / `.git`
+    // / `.ainiux-pr` here blocked git pathspecs (`git check-ignore .ainiux-pr`),
+    // compiler flags (`g++ -I../include`), and quoted program text. Cwd,
+    // executable resolution, git -C, and classified path operands enforce
+    // workspace containment instead.
     for (const std::string& arg : args) {
 #if defined(_WIN32)
         if (arg.size() >= 2 &&
@@ -554,21 +560,10 @@ Error enforce_common_safety(const std::vector<std::string>& args,
         const fs::path possible_path(arg);
         if (possible_path.is_absolute() && !allow_absolute_paths)
             return {ErrorCode::BadArgs, "run_command rejects absolute path arguments"};
-        for (const fs::path& component : possible_path) {
-            std::string value = component.u8string();
-#if defined(_WIN32)
-            value = ascii_lower(std::move(value));
-#endif
-            if (value == ".." || value == ".ainiux-pr" || value == ".ainiux" ||
-                value == ".git" || value == ".hg" || value == ".svn") {
-                if (retired_project_script_path(arg) ||
-                    fs::u8path(arg).generic_u8string().find(".ainiux-pr/script") !=
-                        std::string::npos)
-                    return {ErrorCode::BadArgs, retired_project_script_message()};
-                return {ErrorCode::BadArgs,
-                        "run_command rejects traversal and protected metadata paths"};
-            }
-        }
+        if (retired_project_script_path(arg) ||
+            fs::u8path(arg).generic_u8string().find(".ainiux-pr/script") !=
+                std::string::npos)
+            return {ErrorCode::BadArgs, retired_project_script_message()};
     }
     return ok_error();
 }

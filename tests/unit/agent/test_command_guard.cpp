@@ -252,6 +252,14 @@ print(1)")CMD",
                                  agent::CommandPolicy::RestrictedReadOnly, rule);
     check(error.ok(),
           "restricted policy accepts git log inspection: " + error.message);
+    error = agent::parse_command("git check-ignore -v .venv .ainiux-pr", args,
+                                 agent::CommandPolicy::RestrictedReadOnly, rule);
+    check(error.ok(),
+          "restricted policy accepts git check-ignore pathspecs: " + error.message);
+    error = agent::parse_command("g++ -I../include -c src/hello.cpp", args,
+                                 agent::CommandPolicy::Agent, rule);
+    check(error.ok(),
+          "agent parse accepts compiler -I../ flags: " + error.message);
     error = agent::parse_command("git -c core.pager=cat config --get user.name", args,
                                  agent::CommandPolicy::Agent, rule);
     check(!error.ok() && error.message.find("config") != std::string::npos,
@@ -344,8 +352,31 @@ void test_read_only_command_classifier() {
               vetted({"git", "remote", "-v"}) &&
               vetted({"git", "show", "HEAD"}) &&
               vetted({"git", "branch", "--show-current"}) &&
-              vetted({"git", "stash", "list"}),
+              vetted({"git", "stash", "list"}) &&
+              vetted({"git", "check-ignore", "-v", ".venv", ".ainiux-pr"}) &&
+              vetted({"git", "ls-files", ".venv", ".ainiux-pr"}),
           "classifier: common git inspection forms");
+    {
+        const agent::ReadOnlyCommandAssessment check_ignore =
+            agent::assess_read_only_command(
+                {"git", "check-ignore", "-v", ".venv", ".ainiux-pr"});
+        check(check_ignore.vetted && check_ignore.git_query_pathspecs &&
+                  check_ignore.path_operands.size() == 2 &&
+                  check_ignore.chdir_operands.empty(),
+              "classifier: git check-ignore pathspecs are queries");
+        const agent::ReadOnlyCommandAssessment git_chdir =
+            agent::assess_read_only_command({"git", "-C", "src", "status"});
+        check(git_chdir.vetted && git_chdir.git_query_pathspecs &&
+                  git_chdir.chdir_operands.size() == 1 &&
+                  git_chdir.chdir_operands[0] == "src",
+              "classifier: git -C is a chdir operand, not a pathspec");
+        const agent::ReadOnlyCommandAssessment ls_files =
+            agent::assess_read_only_command(
+                {"git", "ls-files", ".venv", ".ainiux-pr"});
+        check(ls_files.vetted && ls_files.git_query_pathspecs &&
+                  ls_files.path_operands.size() == 2,
+              "classifier: git ls-files pathspecs are queries");
+    }
     check(!vetted({"git", "diff", "--output=owned"}) &&
               !vetted({"git", "commit", "-am", "x"}) &&
               !vetted({"git", "push"}) &&

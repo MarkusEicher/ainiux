@@ -1007,7 +1007,8 @@ Error validate_command_workspace_paths(const index::Snapshot& snapshot,
                                        const std::string& cwd,
                                        bool index_only,
                                        bool allow_external,
-                                       bool& uses_external) {
+                                       bool& uses_external,
+                                       bool skip_path_operands) {
     uses_external = false;
     std::error_code ec;
     const fs::path root = fs::canonical(snapshot.workspace, ec);
@@ -1037,6 +1038,11 @@ Error validate_command_workspace_paths(const index::Snapshot& snapshot,
         return {ErrorCode::BadArgs,
                 index_only ? "run_command cwd has no eligible indexed content"
                            : "run_command cwd is outside the workspace or not visible"};
+    // Git inspection pathspecs are queries, not opened files. Skipping this
+    // operand scan avoids treating `git check-ignore .ainiux-pr` or
+    // `git ls-files .venv` as protected/missing filesystem access. git -C is
+    // validated separately as a real directory.
+    if (skip_path_operands) return ok_error();
     for (std::size_t index = 1; index < arguments.size(); ++index) {
         const std::string& argument = arguments[index];
         if (argument.empty() || argument.front() == '-') continue;
@@ -1122,8 +1128,8 @@ Error validate_vetted_read_only_paths(const index::Snapshot& snapshot,
                 "vetted read-only command cwd must be an existing safe directory"};
     if (!resolved_path_is_under(root, canonical_cwd)) outside_project = true;
 
-    for (const std::string& operand : assessment.path_operands) {
-        if (operand.empty() || operand == "-") continue;
+    auto validate_existing = [&](const std::string& operand, bool as_directory) -> Error {
+        if (operand.empty() || operand == "-") return ok_error();
         const fs::path supplied = fs::u8path(operand);
         const fs::path requested =
             supplied.is_absolute() ? supplied : canonical_cwd / supplied;
@@ -1134,7 +1140,9 @@ Error validate_vetted_read_only_paths(const index::Snapshot& snapshot,
         const fs::file_status literal_status = fs::symlink_status(requested, ec);
         if (ec || literal_status.type() == fs::file_type::not_found)
             return {ErrorCode::BadArgs,
-                    "vetted read-only command path does not exist: " + operand};
+                    as_directory ? ("git -C requires an existing directory: " + operand)
+                                 : ("vetted read-only command path does not exist: " +
+                                    operand)};
         if (fs::is_symlink(literal_status))
             return {ErrorCode::BadArgs,
                     "vetted read-only command refused symlink path: " + operand};
@@ -1148,7 +1156,38 @@ Error validate_vetted_read_only_paths(const index::Snapshot& snapshot,
             return {ErrorCode::BadArgs,
                     "could not safely resolve vetted read-only command path: " +
                         operand};
+        if (as_directory && !fs::is_directory(canonical, ec))
+            return {ErrorCode::BadArgs,
+                    "git -C requires an existing directory: " + operand};
         if (!resolved_path_is_under(root, canonical)) outside_project = true;
+        return ok_error();
+    };
+
+    for (const std::string& operand : assessment.chdir_operands) {
+        const Error chdir_error = validate_existing(operand, true);
+        if (!chdir_error.ok()) return chdir_error;
+    }
+
+    if (assessment.git_query_pathspecs) {
+        for (const std::string& operand : assessment.path_operands) {
+            if (operand.empty() || operand == "-") continue;
+            if (path_has_home_or_env_prefix(operand))
+                return {ErrorCode::BadArgs,
+                        "git pathspec refused home or environment path: " + operand};
+            const fs::path supplied = fs::u8path(operand);
+            const fs::path requested =
+                supplied.is_absolute() ? supplied : canonical_cwd / supplied;
+            fs::path normalized = fs::weakly_canonical(requested, ec);
+            if (ec || normalized.empty())
+                normalized = requested.lexically_normal();
+            if (!resolved_path_is_under(root, normalized)) outside_project = true;
+        }
+        return ok_error();
+    }
+
+    for (const std::string& operand : assessment.path_operands) {
+        const Error path_error = validate_existing(operand, false);
+        if (!path_error.ok()) return path_error;
     }
     return ok_error();
 }
@@ -5200,16 +5239,16 @@ std::string ReadToolRegistry::execute(const std::string& requested_name,
         const bool index_only_commands =
             mutation_policy_ == MutationPolicy::Disabled;
         bool uses_external = false;
+        const ReadOnlyCommandAssessment read_only =
+            assess_read_only_command(parsed_arguments);
         policy_error = validate_command_workspace_paths(
             snapshot_, parsed_arguments, cwd, index_only_commands, agent_session,
-            uses_external);
+            uses_external, read_only.git_query_pathspecs);
         if (!policy_error.ok()) return tool_error_result("policy_denied", policy_error.message);
         if (!full && agent_session && uses_external)
             return tool_error_result(
                 "policy_denied",
                 "restricted run_command paths and cwd must remain inside the project");
-        const ReadOnlyCommandAssessment read_only =
-            assess_read_only_command(parsed_arguments);
         bool read_only_uses_external = false;
         if (read_only.vetted) {
             policy_error = validate_vetted_read_only_paths(

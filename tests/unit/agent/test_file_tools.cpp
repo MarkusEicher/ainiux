@@ -399,6 +399,26 @@ void test_permission_modes_and_native_path_tools() {
               smart_asks.load() == 0,
           "smart mode does not prompt for g++");
     check(json_error_code(smart_prompting.execute(
+              "run", R"({"command":"g++ -I../include -c src/hello.cpp"})")) !=
+                  "policy_denied" &&
+              smart_asks.load() == 0,
+          "smart mode does not treat compiler -I../ flags as traversal");
+    check(json_error_code(smart_prompting.execute(
+              "run",
+              R"({"command":"git check-ignore -v .venv .tools .probe .ainiux-pr"})")) !=
+                  "policy_denied" &&
+              smart_asks.load() == 0,
+          "smart mode does not prompt for git check-ignore pathspecs");
+    check(json_error_code(smart_prompting.execute(
+              "run", R"({"command":"git ls-files .venv .ainiux-pr"})")) !=
+                  "policy_denied" &&
+              smart_asks.load() == 0,
+          "smart mode does not prompt for git ls-files pathspecs");
+    check(json_error_code(smart_prompting.execute(
+              "run", R"({"command":"git status .ainiux-pr"})")) != "policy_denied" &&
+              smart_asks.load() == 0,
+          "smart mode does not prompt for git status pathspecs");
+    check(json_error_code(smart_prompting.execute(
               "run", R"({"command":"javac Main.java"})")) != "policy_denied" &&
               smart_asks.load() == 0,
           "smart mode does not prompt for javac");
@@ -439,6 +459,9 @@ void test_permission_modes_and_native_path_tools() {
     check(!json_ok(smart.execute(
               "run", R"({"command":"ls .ainiux-pr"})")),
           "smart mode rejects protected metadata before approval");
+    check(!json_ok(smart.execute(
+              "run", R"({"command":"git -C .ainiux-pr status"})")),
+          "smart mode rejects git -C into agent state");
     fs::create_symlink(temp_parent / "nested" / "to.txt",
                        fs::path(workspace) / "escape-link", ec);
     check(!json_ok(smart.execute(

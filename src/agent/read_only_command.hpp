@@ -12,6 +12,13 @@ namespace ainiux::agent {
 struct ReadOnlyCommandAssessment {
     bool vetted = false;
     std::vector<std::string> path_operands;
+    // git -C directories: real cwd-like paths that must stay in-project and
+    // outside agent state. Distinct from pathspecs, which are git queries.
+    std::vector<std::string> chdir_operands;
+    // When true, path_operands are git pathspecs (check-ignore, status, diff,
+    // ls-files, log -- PATH). They may name ignored dirs, .git, .ainiux-pr,
+    // missing files, and in-tree `..`.
+    bool git_query_pathspecs = false;
     std::string reason;
 };
 
