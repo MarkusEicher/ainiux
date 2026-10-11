@@ -2745,6 +2745,14 @@ void test_agent_project_slash_command_parsing() {
     check(ainiux::tui::parse_agent_slash_command("/goal clear now").action ==
               ainiux::tui::AgentSlashAction::Invalid,
           "agent /goal clear rejects extra args");
+    check(ainiux::tui::parse_agent_slash_command("/statistics").action ==
+              ainiux::tui::AgentSlashAction::Statistics,
+          "agent /statistics parses");
+    const auto invalid_statistics =
+        ainiux::tui::parse_agent_slash_command("/statistics extra");
+    check(invalid_statistics.action == ainiux::tui::AgentSlashAction::Invalid &&
+              invalid_statistics.error == "Usage: /statistics",
+          "agent /statistics rejects extra args");
 }
 
 void test_prompt_recall_is_mode_isolated() {

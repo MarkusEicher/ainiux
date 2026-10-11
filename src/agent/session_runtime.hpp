@@ -1,8 +1,10 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -17,6 +19,7 @@
 #include "agent/project_root.hpp"
 #include "agent/review_log.hpp"
 #include "agent/session_store.hpp"
+#include "agent/statistics.hpp"
 #include "agent/tools.hpp"
 #include "agent/attachment_bag.hpp"
 #include "mcp/client.hpp"
@@ -228,6 +231,9 @@ class AgentSessionRuntime {
     std::size_t session_failed_tool_calls() const {
         return session_failed_tool_calls_;
     }
+    // Project-session totals including the in-flight turn. Safe for the UI
+    // thread during an active worker turn.
+    AgentSessionStatistics session_statistics() const;
 
     // Thread-safe: returns last published estimate (worker updates only).
     // Never walks conversation_ from the UI thread — that races with run_user_turn.
@@ -366,7 +372,16 @@ class AgentSessionRuntime {
         bool forced_summary = false);
 
     Error persist_goal_settings();
+    Error persist_session_statistics();
     Error write_session_settings(AgentProjectRecord& project) const;
+    AgentSessionStatistics committed_session_statistics() const;
+    void apply_restored_statistics(const AgentSessionStatistics& stats);
+    void begin_live_turn();
+    void add_live_tool_call(bool failed);
+    void accumulate_session_token_usage(const provider::ChatResult& metrics,
+                                        long long estimated_input_tokens,
+                                        long long estimated_output_tokens);
+    void commit_live_turn_elapsed();
     void inject_active_goal_control(bool continue_nudge);
     void apply_context_reset_filter(std::vector<AgentMessageRecord>& messages) const;
     void apply_context_reset_filter(std::vector<AgentMessageRecord>& messages,
@@ -410,6 +425,14 @@ class AgentSessionRuntime {
     std::size_t session_turns_ = 0;
     std::size_t session_tool_calls_ = 0;
     std::size_t session_failed_tool_calls_ = 0;
+    AgentTokenUsage session_token_usage_{};
+    long long session_elapsed_ms_ = 0;
+    mutable std::mutex statistics_mutex_;
+    bool live_turn_active_ = false;
+    std::chrono::steady_clock::time_point live_turn_started_{};
+    long long live_turn_wait_before_ms_ = 0;
+    std::size_t live_turn_tool_calls_ = 0;
+    std::size_t live_turn_failed_tool_calls_ = 0;
     // Published by the agent worker; read by the TUI render path without locking conversation_.
     mutable std::atomic<long long> cached_request_tokens_{0};
     mutable std::atomic<long long> last_nonzero_request_tokens_{0};

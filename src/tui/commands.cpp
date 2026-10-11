@@ -205,6 +205,15 @@ AgentSlashCommand parse_agent_slash_command(const std::string& text) {
         command.argument = argument;
         return command;
     }
+    if (text == "/statistics") {
+        command.action = AgentSlashAction::Statistics;
+        return command;
+    }
+    if (text.rfind("/statistics ", 0) == 0) {
+        command.action = AgentSlashAction::Invalid;
+        command.error = "Usage: /statistics";
+        return command;
+    }
     if (text == "/list-mcp") {
         command.action = AgentSlashAction::ListMcp;
         return command;
@@ -327,6 +336,7 @@ void handle_tui_command(const std::string& text, TuiCommandContext& ctx, TuiComm
                                     "/lead [clean|N|all] (switch to Lead; default N=2)\n"
                                     "/act (return to Act mode)\n"
                                     "/goal [condition|clear|pause|resume]\n"
+                                    "/statistics\n"
                                     "/permissions [confirm|smart|yolo]\n"
                                     "/list-mcp /enable-mcp /disable-mcp /remove-mcp NAME\n"
                                     "/add-mcp  (shows CLI install examples; install is not in-agent yet)\n"
@@ -702,6 +712,10 @@ void handle_tui_command(const std::string& text, TuiCommandContext& ctx, TuiComm
     }
     if (agent_command.action == AgentSlashAction::GoalStatus) {
         if (handlers.show_agent_goal_status) handlers.show_agent_goal_status();
+        return;
+    }
+    if (agent_command.action == AgentSlashAction::Statistics) {
+        if (handlers.show_agent_statistics) handlers.show_agent_statistics();
         return;
     }
     if (agent_command.action == AgentSlashAction::GoalSet) {

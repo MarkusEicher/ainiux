@@ -12,6 +12,7 @@
 #include "agent/approval.hpp"
 #include "agent/project_settings.hpp"
 #include "agent/session_runtime.hpp"
+#include "agent/statistics.hpp"
 #include "agent/tool_display.hpp"
 #include "config/model_catalog.hpp"
 #include "json/json.hpp"
@@ -403,6 +404,15 @@ std::string InteractiveSession::snapshot_json() const {
         result += ",\"questionnaire\":null";
     }
     return result + "}";
+}
+
+std::string InteractiveSession::statistics_json() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (closed_ || !controller_ || !controller_->runtime() ||
+        !controller_->runtime()->prepared()) {
+        return agent::format_agent_statistics_json(agent::AgentSessionStatistics{});
+    }
+    return agent::format_agent_statistics_json(controller_->runtime()->session_statistics());
 }
 
 Error InteractiveSession::start_turn(const std::string& body, std::string& turn_id) {

@@ -12,6 +12,7 @@
 #include "agent/project_settings.hpp"
 #include "agent/session_runtime.hpp"
 #include "agent/session_store.hpp"
+#include "agent/statistics.hpp"
 #include "app/app.hpp"
 #include "cli/args.hpp"
 #include "provider/provider.hpp"
@@ -1370,6 +1371,130 @@ void test_switch_permission_mode_persists_and_reloads() {
     fs::remove_all(workspace, ec);
 }
 
+void test_agent_session_statistics_format_and_persist() {
+    check(agent::format_agent_elapsed_hms(0) == "0 hours, 0 minutes, 0 seconds",
+          "zero elapsed uses all three units");
+    check(agent::format_agent_elapsed_hms(1000) == "0 hours, 0 minutes, 1 second",
+          "one second is singular");
+    check(agent::format_agent_elapsed_hms(61000) == "0 hours, 1 minute, 1 second",
+          "one minute and one second are singular");
+    check(agent::format_agent_elapsed_hms(3725000) ==
+              "1 hour, 2 minutes, 5 seconds",
+          "HMS wording matches the /statistics display contract");
+
+    agent::AgentSessionStatistics empty;
+    const std::string empty_table = agent::format_agent_statistics_table(empty);
+    check(empty_table.find("Cached input tokens") != std::string::npos &&
+              empty_table.find("Fresh input tokens") != std::string::npos &&
+              empty_table.find("Output tokens") != std::string::npos &&
+              empty_table.find("Cache hit ratio") != std::string::npos &&
+              empty_table.find("n/a") != std::string::npos &&
+              empty_table.find("Tool calls") != std::string::npos &&
+              empty_table.find("Failed tool calls") != std::string::npos &&
+              empty_table.find("Fail percentage") != std::string::npos &&
+              empty_table.find("0.0%") != std::string::npos &&
+              empty_table.find("Time spent") != std::string::npos &&
+              empty_table.find("0 hours, 0 minutes, 0 seconds") != std::string::npos,
+          "empty statistics table includes required labels, n/a hit ratio, and 0.0% fail");
+
+    provider::ChatResult first;
+    first.usage_json = "{}";
+    first.prompt_tokens = 100;
+    first.fresh_prompt_tokens = 20;
+    first.cache_read_tokens = 80;
+    first.completion_tokens = 7;
+    provider::ChatResult second = first;
+    second.prompt_tokens = 200;
+    second.fresh_prompt_tokens = 50;
+    second.cache_read_tokens = 150;
+    second.completion_tokens = 11;
+    agent::AgentTokenUsage usage;
+    agent::accumulate_agent_token_usage(first, usage);
+    agent::accumulate_agent_token_usage(second, usage);
+    agent::AgentSessionStatistics summed;
+    summed.cached_input_tokens = usage.cache_read_tokens;
+    summed.fresh_input_tokens = usage.fresh_input_tokens;
+    summed.output_tokens = usage.output_tokens;
+    summed.tool_calls = 4;
+    summed.failed_tool_calls = 1;
+    summed.elapsed_ms = 3725000;
+    check(summed.cached_input_tokens == 230 && summed.fresh_input_tokens == 70 &&
+              summed.output_tokens == 18,
+          "two fake rounds accumulate cached, fresh, and output tokens");
+    const std::string table = agent::format_agent_statistics_table(summed);
+    check(table.find("230") != std::string::npos &&
+              table.find("70") != std::string::npos &&
+              table.find("18") != std::string::npos &&
+              table.find("76.7%") != std::string::npos &&
+              table.find("25.0%") != std::string::npos &&
+              table.find("1 hour, 2 minutes, 5 seconds") != std::string::npos,
+          "statistics table shows summed tokens, cache hit ratio, fail percentage, and HMS");
+
+    agent::AgentSessionStatistics estimated;
+    estimated.output_tokens = 1234;
+    estimated.output_estimated = true;
+    const std::string estimated_table = agent::format_agent_statistics_table(estimated);
+    check(estimated_table.find("1,234 (estimated)") != std::string::npos,
+          "output token estimates use thousands separators and an estimated marker");
+
+    std::string encoded;
+    check(agent::settings_json_with_statistics("{}", summed, encoded).ok() &&
+              encoded.find("\"cached_input_tokens\":230") != std::string::npos,
+          "statistics persist into settings_json");
+    agent::AgentSessionStatistics restored;
+    check(agent::statistics_from_settings_json(encoded, restored).ok() &&
+              restored.cached_input_tokens == 230 &&
+              restored.fresh_input_tokens == 70 &&
+              restored.output_tokens == 18 && restored.tool_calls == 4 &&
+              restored.failed_tool_calls == 1 && restored.elapsed_ms == 3725000,
+          "statistics restore from settings_json");
+
+    const std::string json = agent::format_agent_statistics_json(summed);
+    check(json.find("\"cache_hit_ratio\":76.7") != std::string::npos &&
+              json.find("\"fail_percentage\":25.0") != std::string::npos &&
+              json.find("\"elapsed_text\":\"1 hour, 2 minutes, 5 seconds\"") !=
+                  std::string::npos &&
+              json.find("\"markdown\":") != std::string::npos,
+          "statistics JSON includes ratio, elapsed text, and markdown table");
+
+    const std::string workspace = temp_workspace("session-statistics");
+    agent::AgentSessionRuntime runtime;
+    agent::SessionRuntimeOptions options;
+    options.workspace = workspace;
+    options.interactive = true;
+    options.enable_session_db = true;
+    options.enable_agent_log = false;
+    options.index_mode = agent::SessionRuntimeOptions::IndexMode::Disabled;
+    provider::RequestContext context = offline_context(workspace);
+    Error error = runtime.prepare(context, {}, {}, options);
+    check(error.ok() && runtime.prepared(),
+          "prepare for statistics persist: " + error.message);
+    runtime.reset();
+    {
+        agent::AgentSessionStore store;
+        check(store.open(workspace).ok(), "open project to write statistics");
+        agent::AgentProjectRecord project;
+        check(store.open_project(project).ok(), "load project to write statistics");
+        check(agent::settings_json_with_statistics(project.settings_json, summed,
+                                                   project.settings_json)
+                  .ok(),
+              "encode statistics into project settings");
+        check(store.update_project_meta(project).ok(),
+              "store persisted statistics");
+    }
+    error = runtime.prepare(context, {}, {}, options);
+    check(error.ok() && runtime.prepared(),
+          "re-prepare after statistics persist: " + error.message);
+    const agent::AgentSessionStatistics live = runtime.session_statistics();
+    check(live.cached_input_tokens == 230 && live.fresh_input_tokens == 70 &&
+              live.output_tokens == 18 && live.tool_calls == 4 &&
+              live.failed_tool_calls == 1 && live.elapsed_ms == 3725000,
+          "prepare restores persisted session statistics");
+    runtime.reset();
+    std::error_code ec;
+    fs::remove_all(workspace, ec);
+}
+
 void test_reset_model_context_and_visible_clear() {
     const std::string workspace = temp_workspace("context-reset");
     {
@@ -1506,6 +1631,7 @@ void run_all() {
     test_display_notices_dedupe_consecutive_duplicates();
     test_prepare_idle_chrome_matches_next_request_not_full_history();
     test_session_goal_set_pause_resume_complete_and_persist();
+    test_agent_session_statistics_format_and_persist();
     test_switch_permission_mode_persists_and_reloads();
     test_reset_model_context_and_visible_clear();
 }

@@ -261,6 +261,12 @@ function parseAgentModeCommand(text) {
   return { mode: "lead", handoff };
 }
 
+function parseAgentStatisticsCommand(text) {
+  if (!/^\/statistics(?:\s|$)/i.test(text)) return null;
+  if (/^\/statistics\s*$/i.test(text)) return { ok: true };
+  return { error: "Usage: /statistics" };
+}
+
 function chatExportAvailable() {
   return supports("chat_pdf") || supports("chat_docx") || supports("chat_md") || supports("chat_json");
 }
@@ -480,8 +486,10 @@ function chatNotice(message, severity = "message", threadId = state.thread?.id ?
   if ((threadId == null && !state.thread) || state.thread?.id === threadId) renderChat();
 }
 
-function agentNotice(message, severity = "message", sessionId = state.session?.id ?? null) {
-  scopedNotice(state.agentNotices, state.agentUnscopedNotices, sessionId, message, severity);
+function agentNotice(message, severity = "message", sessionId = state.session?.id ?? null,
+                     fields = {}) {
+  scopedNotice(state.agentNotices, state.agentUnscopedNotices, sessionId, message, severity,
+    fields);
   if ((sessionId == null && !state.session) || state.session?.id === sessionId) renderAgent();
 }
 
@@ -501,8 +509,14 @@ function appendConversationNotice(container, record, cardClass) {
     record.severity === "warning" ? "⚠️ warning" : "⚠️ error";
   const card = element("article", `${cardClass} browser-notice`);
   card.dataset.severity = record.severity;
-  card.append(element("div", cardClass === "message" ? "role" : "event-type", prefix),
-    element("p", "browser-notice-text", record.message));
+  card.append(element("div", cardClass === "message" ? "role" : "event-type", prefix));
+  if (record.markdown) {
+    const output = element("div", "message-content");
+    appendMarkdown(output, record.message);
+    card.append(output);
+  } else {
+    card.append(element("p", "browser-notice-text", record.message));
+  }
   container.append(card);
 }
 
@@ -5160,6 +5174,29 @@ function bindEvents() {
       }
       const extra = modeCommand.handoff ? { handoff: modeCommand.handoff } : {};
       await setAgentSetting("lane", modeCommand.mode, extra);
+      return;
+    }
+    const statisticsCommand = parseAgentStatisticsCommand(text);
+    if (statisticsCommand) {
+      byId("agent-turn-input").value = "";
+      if (statisticsCommand.error) {
+        agentNotice(statisticsCommand.error, "error");
+        return;
+      }
+      if (!state.session) {
+        agentNotice("Open Agent to initialize this workspace.", "error");
+        return;
+      }
+      const sessionId = state.session.id;
+      try {
+        const response = await api(
+          `${API_ROOT}/sessions/${encodeURIComponent(sessionId)}/statistics`);
+        if (state.session?.id !== sessionId) return;
+        const markdown = typeof response.markdown === "string" && response.markdown
+          ? response.markdown
+          : "No session statistics are available yet.";
+        agentNotice(markdown, "message", sessionId, { markdown: true });
+      } catch (error) { agentNotice(errorMessage(error), "error", sessionId); }
       return;
     }
     if (handleChatSlashCommand(text)) {

@@ -31,6 +31,7 @@
 #include "agent/project_root.hpp"
 #include "agent/project_settings.hpp"
 #include "agent/session_runtime.hpp"
+#include "agent/statistics.hpp"
 #include "agent/tool_display.hpp"
 #include "chat/settings.hpp"
 #include "chat/media_store.hpp"
@@ -2443,6 +2444,18 @@ app::TuiRunResult run(provider::RequestContext context,
             return;
         }
         status = agent::format_goal_status(agent_runtime->goal());
+    };
+    command_handlers.show_agent_statistics = [&]() {
+        if (!agent_runtime || !agent_runtime->prepared()) {
+            status = "Agent session runtime is not ready";
+            return;
+        }
+        const std::string table =
+            agent::format_agent_statistics_table(agent_runtime->session_statistics());
+        provider::Message notice{"notice", table};
+        session.messages.push_back(std::move(notice));
+        history_scroll = 0;
+        status = "Session statistics";
     };
     command_handlers.set_agent_goal = [&](const std::string& condition) {
         if (!agent_runtime || !agent_runtime->prepared()) {

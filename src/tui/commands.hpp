@@ -41,6 +41,7 @@ enum class AgentSlashAction {
     RemoveMcp,
     EnableMcp,
     DisableMcp,
+    Statistics,
     Invalid
 };
 
@@ -80,6 +81,7 @@ struct TuiCommandHandlers {
     std::function<void(const std::string&)> switch_agent_permission_mode;
     std::function<void()> open_agent_permission_picker;
     std::function<void()> show_agent_goal_status;
+    std::function<void()> show_agent_statistics;
     std::function<void(const std::string& condition)> set_agent_goal;
     std::function<void()> clear_agent_goal;
     std::function<void()> pause_agent_goal;

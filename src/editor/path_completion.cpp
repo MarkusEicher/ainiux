@@ -128,6 +128,7 @@ const std::vector<std::string>& agent_command_completions() {
         "/shell ",
         "/shell-stdout ",
         "/show-index",
+        "/statistics",
         "/system",
         "/theme ",
         "/thinking ",

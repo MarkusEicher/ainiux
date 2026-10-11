@@ -21,6 +21,7 @@
 #include "agent/goal.hpp"
 #include "agent/project_root.hpp"
 #include "agent/project_settings.hpp"
+#include "agent/statistics.hpp"
 #include "agent/reasoning_preview.hpp"
 #include "agent/tool_display.hpp"
 #include "chat/settings.hpp"
@@ -335,6 +336,101 @@ void AgentSessionRuntime::clear_in_flight_generation_tokens() {
     in_flight_generation_tokens_.store(0, std::memory_order_relaxed);
 }
 
+AgentSessionStatistics AgentSessionRuntime::committed_session_statistics() const {
+    AgentSessionStatistics stats;
+    stats.input_tokens = session_token_usage_.input_tokens;
+    stats.cached_input_tokens = session_token_usage_.cache_read_tokens;
+    stats.fresh_input_tokens = session_token_usage_.fresh_input_tokens;
+    stats.cache_write_tokens = session_token_usage_.cache_write_tokens;
+    stats.output_tokens = session_token_usage_.output_tokens;
+    stats.reported_rounds = session_token_usage_.reported_rounds;
+    stats.input_estimated = session_token_usage_.input_estimated;
+    stats.output_estimated = session_token_usage_.output_estimated;
+    stats.tool_calls = session_tool_calls_;
+    stats.failed_tool_calls = session_failed_tool_calls_;
+    stats.elapsed_ms = session_elapsed_ms_;
+    return stats;
+}
+
+void AgentSessionRuntime::apply_restored_statistics(const AgentSessionStatistics& stats) {
+    session_token_usage_.input_tokens = stats.input_tokens;
+    session_token_usage_.cache_read_tokens = stats.cached_input_tokens;
+    session_token_usage_.fresh_input_tokens = stats.fresh_input_tokens;
+    session_token_usage_.cache_write_tokens = stats.cache_write_tokens;
+    session_token_usage_.output_tokens = stats.output_tokens;
+    session_token_usage_.reported_rounds = stats.reported_rounds;
+    session_token_usage_.input_estimated = stats.input_estimated;
+    session_token_usage_.output_estimated = stats.output_estimated;
+    session_tool_calls_ = stats.tool_calls;
+    session_failed_tool_calls_ = stats.failed_tool_calls;
+    session_elapsed_ms_ = stats.elapsed_ms;
+}
+
+AgentSessionStatistics AgentSessionRuntime::session_statistics() const {
+    std::lock_guard<std::mutex> lock(statistics_mutex_);
+    AgentSessionStatistics stats = committed_session_statistics();
+    stats.tool_calls += live_turn_tool_calls_;
+    stats.failed_tool_calls += live_turn_failed_tool_calls_;
+    if (live_turn_active_) {
+        const long long wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      std::chrono::steady_clock::now() - live_turn_started_)
+                                      .count();
+        stats.elapsed_ms += execution_only_elapsed_ms(
+            wall_ms, live_turn_wait_before_ms_,
+            interactive_wait_ms_.load(std::memory_order_relaxed));
+    }
+    return stats;
+}
+
+void AgentSessionRuntime::begin_live_turn() {
+    std::lock_guard<std::mutex> lock(statistics_mutex_);
+    live_turn_active_ = true;
+    live_turn_started_ = std::chrono::steady_clock::now();
+    live_turn_wait_before_ms_ = interactive_wait_ms_.load(std::memory_order_relaxed);
+    live_turn_tool_calls_ = 0;
+    live_turn_failed_tool_calls_ = 0;
+}
+
+void AgentSessionRuntime::add_live_tool_call(bool failed) {
+    std::lock_guard<std::mutex> lock(statistics_mutex_);
+    ++live_turn_tool_calls_;
+    if (failed) ++live_turn_failed_tool_calls_;
+}
+
+void AgentSessionRuntime::accumulate_session_token_usage(
+    const provider::ChatResult& metrics,
+    long long estimated_input_tokens,
+    long long estimated_output_tokens) {
+    std::lock_guard<std::mutex> lock(statistics_mutex_);
+    accumulate_agent_token_usage(metrics, session_token_usage_, estimated_input_tokens,
+                                 estimated_output_tokens);
+}
+
+void AgentSessionRuntime::commit_live_turn_elapsed() {
+    std::lock_guard<std::mutex> lock(statistics_mutex_);
+    if (live_turn_active_) {
+        const long long wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      std::chrono::steady_clock::now() - live_turn_started_)
+                                      .count();
+        session_elapsed_ms_ += execution_only_elapsed_ms(
+            wall_ms, live_turn_wait_before_ms_,
+            interactive_wait_ms_.load(std::memory_order_relaxed));
+        live_turn_active_ = false;
+    }
+    live_turn_tool_calls_ = 0;
+    live_turn_failed_tool_calls_ = 0;
+}
+
+Error AgentSessionRuntime::persist_session_statistics() {
+    if (!session_store_.is_open()) return ok_error();
+    AgentProjectRecord project;
+    Error error = session_store_.open_project(project);
+    if (!error.ok()) return error;
+    error = write_session_settings(project);
+    if (!error.ok()) return error;
+    return session_store_.update_project_meta(project);
+}
+
 Error AgentSessionRuntime::update_project_settings(
     const provider::RequestContext& context) {
     if (!prepared_) return {ErrorCode::Internal, "agent runtime is not prepared"};
@@ -499,6 +595,12 @@ Error AgentSessionRuntime::write_session_settings(AgentProjectRecord& project) c
         project.settings_json, permission_mode_, project.settings_json);
     if (!error.ok()) return error;
     error = settings_json_with_goal(project.settings_json, goal_, project.settings_json);
+    if (!error.ok()) return error;
+    {
+        std::lock_guard<std::mutex> lock(statistics_mutex_);
+        error = settings_json_with_statistics(
+            project.settings_json, committed_session_statistics(), project.settings_json);
+    }
     if (!error.ok()) return error;
     error = settings_json_with_context_reset_after_seq(
         project.settings_json, context_reset_after_seq_, project.settings_json);
@@ -1248,6 +1350,13 @@ void AgentSessionRuntime::reset() {
     session_turns_ = 0;
     session_tool_calls_ = 0;
     session_failed_tool_calls_ = 0;
+    session_token_usage_ = AgentTokenUsage{};
+    session_elapsed_ms_ = 0;
+    live_turn_active_ = false;
+    live_turn_started_ = {};
+    live_turn_wait_before_ms_ = 0;
+    live_turn_tool_calls_ = 0;
+    live_turn_failed_tool_calls_ = 0;
     conversation_seeded_ = false;
     prepared_ = false;
     options_ = SessionRuntimeOptions{};
@@ -1572,6 +1681,15 @@ Error AgentSessionRuntime::prepare(const provider::RequestContext& context,
             if (!error.ok()) {
                 reset();
                 return error;
+            }
+            {
+                AgentSessionStatistics restored;
+                error = statistics_from_settings_json(project.settings_json, restored);
+                if (!error.ok()) {
+                    reset();
+                    return error;
+                }
+                apply_restored_statistics(restored);
             }
             error = context_reset_after_seq_from_settings_json(project.settings_json,
                                                                context_reset_after_seq_);
@@ -2750,6 +2868,7 @@ SessionTurnResult AgentSessionRuntime::run_user_turn(
                     compact_tool_args_preview(arguments_json));
             }
         }
+        add_live_tool_call(compact_tool_status(body) != "ok");
         return body;
     };
 
@@ -2763,7 +2882,9 @@ SessionTurnResult AgentSessionRuntime::run_user_turn(
             session_turns_ = state_.turn;
             session_tool_calls_ += turn_tool_calls;
             session_failed_tool_calls_ += turn_failed_tool_calls;
+            commit_live_turn_elapsed();
             counts_committed = true;
+            (void)persist_session_statistics();
         }
         result.turns = state_.turn - turns_before;
         result.tool_calls = turn_tool_calls;
@@ -2788,6 +2909,7 @@ SessionTurnResult AgentSessionRuntime::run_user_turn(
     bool goal_completed_this_turn = false;
     // The scripted-round cap is per user-approved task segment. Keep
     // state_.turn cumulative for logs/session statistics.
+    begin_live_turn();
     for (;;) {
         if (is_interrupted(cancellation, interrupted)) {
             pair_dangling_tool_calls(context, conversation_, state_);
@@ -3210,6 +3332,8 @@ SessionTurnResult AgentSessionRuntime::run_user_turn(
         accumulate_agent_token_usage(round.metrics, result.token_usage,
                                      estimated_round_input_tokens,
                                      estimated_round_output_tokens);
+        accumulate_session_token_usage(round.metrics, estimated_round_input_tokens,
+                                       estimated_round_output_tokens);
         accumulate_agent_stream_decode(round.metrics, estimated_round_output_tokens,
                                        context.options.stream, result.stream_output_tokens,
                                        result.stream_decode_ms,

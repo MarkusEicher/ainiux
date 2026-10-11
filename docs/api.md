@@ -614,6 +614,7 @@ Create and inspect a persistent project-local agent session:
 POST   /ainiux/v1/sessions/agent
 GET    /ainiux/v1/sessions
 GET    /ainiux/v1/sessions/:session_id
+GET    /ainiux/v1/sessions/:session_id/statistics
 GET    /ainiux/v1/sessions/:session_id/events
 GET    /ainiux/v1/sessions/:session_id/history?before=SEQUENCE
 POST   /ainiux/v1/sessions/:session_id/reasoning
@@ -632,6 +633,12 @@ Session creation accepts `kind` (`agent`), `provider`, `model`, `api`, `reasonin
 opaque session ID. A turn body is `{"text":"..."}` and returns `202`
 with a server-generated turn ID. Only one turn may be active per session; a
 concurrent turn returns `409`.
+
+`GET /ainiux/v1/sessions/:session_id/statistics` returns project-session totals
+for cached/fresh/output tokens, cache hit ratio (`null` until a cache breakdown
+is reported), tool-call counts, fail percentage, `elapsed_ms`, `elapsed_text`
+(`H hours, M minutes, S seconds`), and a GitHub-flavored `markdown` table. The
+totals include the in-flight turn. The route accepts GET only and no body.
 
 An idle session's reasoning selector can be changed with
 `{"reasoning":"auto|off|VALUE|TOKENS"}`. Snapshots include the effective

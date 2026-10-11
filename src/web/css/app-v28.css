@@ -276,6 +276,7 @@ main { min-width: 0; min-height: 0; overflow: hidden; }
 .browser-notice[data-severity="error"] { border-left-color: var(--danger); color: var(--danger); }
 .browser-notice .role, .browser-notice .event-type { color: inherit; }
 .browser-notice-text { margin: 0; color: inherit; white-space: pre-wrap; }
+.browser-notice .message-content { color: var(--text); }
 .message pre, .event-card pre, .job-card pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
 .message-content { min-width: 0; }
 .markdown-body { min-width: 0; color: var(--text); overflow-wrap: anywhere; }

@@ -168,7 +168,7 @@ It produces Markdown and may write its local diagnostic review log unless disabl
 
 ## Interactive commands and display
 
-Agent mode shares input editing, cancellation, help, provider/model selectors, scrolling, and editor switching with chat. In the input box, Up on the first visual line and Down on the last visual line recall earlier submitted prompts (this TUI session only). Agent and chat keep separate recall lists. Agent-only commands include `/compact`, `/compact all`, `/clear`, `/cmd-out`, `/index-code`, `/show-index`, `/lead [clean|N|all]`, `/act`, `/goal`, and project permission controls shown by `/help`. `/chat`, `/editor`, `/agent`, `/mode`, and `/cycle` are explicit surface handoffs.
+Agent mode shares input editing, cancellation, help, provider/model selectors, scrolling, and editor switching with chat. In the input box, Up on the first visual line and Down on the last visual line recall earlier submitted prompts (this TUI session only). Agent and chat keep separate recall lists. Agent-only commands include `/compact`, `/compact all`, `/clear`, `/cmd-out`, `/index-code`, `/show-index`, `/lead [clean|N|all]`, `/act`, `/goal`, `/statistics`, and project permission controls shown by `/help`. `/statistics` shows a table of estimated session token use, tool-call counts, and work time for this project. `/chat`, `/editor`, `/agent`, `/mode`, and `/cycle` are explicit surface handoffs.
 
 ### Background agent while in the editor
 

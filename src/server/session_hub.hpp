@@ -25,6 +25,7 @@ class InteractiveSession {
     EventBroker& events() { return events_; }
     const EventBroker& events() const { return events_; }
     std::string snapshot_json() const;
+    std::string statistics_json() const;
 
     Error start_turn(const std::string& body, std::string& turn_id);
     Error cancel_turn(const std::string& turn_id);

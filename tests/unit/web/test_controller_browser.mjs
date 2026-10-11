@@ -32,6 +32,20 @@ test("questionnaire dialog is accessible and rendered without HTML injection", a
   assert.match(script, /event\.target instanceof HTMLTextAreaElement/);
 });
 
+test("agent composer intercepts /statistics without posting a turn", async () => {
+  const script = await readFile(new URL("../../../src/web/js/app-v38.js", import.meta.url), "utf8");
+  assert.match(script, /function parseAgentStatisticsCommand/);
+  assert.match(script, /Usage: \/statistics/);
+  assert.match(script, /sessions\/\$\{encodeURIComponent\(sessionId\)\}\/statistics/);
+  assert.match(script, /markdown: true/);
+  const start = script.indexOf("const statisticsCommand = parseAgentStatisticsCommand");
+  const end = script.indexOf("if (handleChatSlashCommand(text))", start);
+  assert.ok(start >= 0 && end > start, "agent /statistics is handled before a turn POST");
+  const intercept = script.slice(start, end);
+  assert.match(intercept, /api\(/);
+  assert.doesNotMatch(intercept, /\/turns/);
+});
+
 test("web controller selectors, per-thread saves, workspace settings and history", {
   skip: !process.env.AINIUX_TEST_BROWSER, timeout: 30000,
 }, async () => {
@@ -53,6 +67,7 @@ test("web controller selectors, per-thread saves, workspace settings and history
     message_count: id === 1 ? 2 : 0 }));
   let nextThreadId = 3, createdProviders = [], failNextThread = false;
   let chatUploads = [], chatJobs = [], appendedMessages = [], agentTurns = [], chatExports = [];
+  const agentStatisticsGets = [];
   const questionnaireResolutions = [];
   const agentSettings = [];
   let capabilityOperations = ["models", "chat", "chat_threads", "chat_pdf", "chat_docx",
@@ -271,6 +286,22 @@ test("web controller selectors, per-thread saves, workspace settings and history
       }
       if (path.endsWith("/sessions")) return send(session ? [{ ...session, ...workspace }] : []);
       if (path.endsWith("/history")) return send({ turn_id: "", messages: agentHistoryMessages, before: 0 });
+      if (path.endsWith("/statistics") && path.includes("/sessions/") && req.method === "GET") {
+        agentStatisticsGets.push(path);
+        return send({
+          cached_input_tokens: 80,
+          fresh_input_tokens: 20,
+          output_tokens: 7,
+          output_estimated: false,
+          cache_hit_ratio: 80.0,
+          tool_calls: 2,
+          failed_tool_calls: 1,
+          fail_percentage: 50.0,
+          elapsed_ms: 3725000,
+          elapsed_text: "1 hour, 2 minutes, 5 seconds",
+          markdown: "| Metric | Value |\n| --- | ---: |\n| Cached input tokens | 80 |\n| Fresh input tokens | 20 |\n| Output tokens | 7 |\n| Cache hit ratio | 80.0% |\n| Tool calls | 2 |\n| Failed tool calls | 1 |\n| Fail percentage | 50.0% |\n| Time spent | 1 hour, 2 minutes, 5 seconds |\n",
+        });
+      }
       if (path.endsWith("/turns") && req.method === "POST") {
         agentTurns.push(body);
         const turnId = `turn-${agentTurns.length}`;
@@ -985,6 +1016,13 @@ test("web controller selectors, per-thread saves, workspace settings and history
     assert.deepEqual(agentSettings.at(-1), { lane: "lead", handoff: "9" });
     assert.equal(agentTurns.length, 0,
       "/lead clean, /lead all, and /lead N change mode without starting a turn");
+    await evaluate(`{ const input = document.querySelector("#agent-turn-input");
+      input.value = "/statistics"; document.querySelector("#agent-turn-form").requestSubmit(); }`);
+    await wait('document.querySelector("#agent-events table")');
+    assert.equal(agentStatisticsGets.length, 1, "/statistics fetches the session statistics route");
+    assert.equal(agentTurns.length, 0, "/statistics does not start an agent turn");
+    assert.ok(await evaluate('document.querySelector("#agent-events table").textContent.includes("Cache hit ratio")'),
+      "/statistics renders a markdown table notice");
     await evaluate(`{ const input = document.querySelector("#agent-turn-input");
       input.value = "/lead 101"; document.querySelector("#agent-turn-form").requestSubmit(); }`);
     await wait('document.querySelector("#agent-events").textContent.includes("Usage: /lead [clean|1..100|all]")');

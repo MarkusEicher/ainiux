@@ -300,7 +300,9 @@ The default theme follows `prefers-color-scheme`. The explicit System, Dark,
 and Light selector lives in Settings and is stored for the browser origin.
 Chat and Agent also accept `/theme light`, `/theme dark`, and `/theme auto`
 locally without sending those commands to a model. The Agent composer also accepts
-`/act` and `/lead [clean|N|all]` to switch modes without starting a model turn.
+`/act` and `/lead [clean|N|all]` to switch modes without starting a model turn,
+and `/statistics` to show a table of estimated session token use, tool-call
+counts, and work time without starting a turn.
 The palettes use the same
 color codes as the built-in Ainiux TUI themes, including dark
 `#0B0F14`/`#E6EDF3` and light

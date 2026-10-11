@@ -1437,6 +1437,28 @@ void test_interactive_sessions_are_bounded_and_replayable() {
               session->snapshot_json().find("\"active_elapsed_ms\":null") != std::string::npos &&
               session->snapshot_json().find("\"last_turn_metrics\":null") != std::string::npos,
           "interactive snapshots expose stable context and turn-metric fields before a turn");
+    Response statistics = route_request(
+        session_request("GET", "/ainiux/v1/sessions/" + id + "/statistics", ""), auth, status);
+    check(statistics.status == 200 &&
+              statistics.body.find("\"cached_input_tokens\":") != std::string::npos &&
+              statistics.body.find("\"fresh_input_tokens\":") != std::string::npos &&
+              statistics.body.find("\"output_tokens\":") != std::string::npos &&
+              statistics.body.find("\"cache_hit_ratio\":") != std::string::npos &&
+              statistics.body.find("\"tool_calls\":") != std::string::npos &&
+              statistics.body.find("\"failed_tool_calls\":") != std::string::npos &&
+              statistics.body.find("\"fail_percentage\":") != std::string::npos &&
+              statistics.body.find("\"elapsed_text\":") != std::string::npos &&
+              statistics.body.find("\"markdown\":") != std::string::npos,
+          "GET session statistics returns numeric fields, elapsed text, and markdown");
+    Response statistics_body = route_request(
+        session_request("GET", "/ainiux/v1/sessions/" + id + "/statistics", "{}"), auth,
+        status);
+    check(statistics_body.status == 400,
+          "session statistics rejects a request body");
+    Response statistics_post = route_request(
+        session_request("POST", "/ainiux/v1/sessions/" + id + "/statistics", "{}"), auth,
+        status);
+    check(statistics_post.status == 405, "session statistics accepts GET only");
 
     Response listed = route_request(session_request("GET", "/ainiux/v1/sessions", ""), auth, status);
     check(listed.status == 200 && listed.body.find(id) != std::string::npos,

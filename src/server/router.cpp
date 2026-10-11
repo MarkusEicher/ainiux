@@ -1286,6 +1286,17 @@ Response route_request(const http::Request& request,
             response.body = "{\"deleted\":true,\"id\":" + json::quote(session_id) + "}";
             return response;
         }
+        if (action == "statistics") {
+            if (request.method != "GET") {
+                response = error_response(405, "method_not_allowed", "statistics accepts GET only");
+                response.allow = "GET";
+                return response;
+            }
+            if (!request.body.empty())
+                return error_response(400, "invalid_request", "statistics does not accept a body");
+            response.body = session->statistics_json();
+            return response;
+        }
         if (action == "history") {
             if (request.method != "GET") {
                 response = error_response(405, "method_not_allowed", "history accepts GET only");
