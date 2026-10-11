@@ -664,6 +664,90 @@ void test_workspace_script_execution() {
     fs::remove_all(workspace, ec);
 }
 
+void test_venv_python_symlink_stays_runnable() {
+#if defined(_WIN32)
+    return;
+#else
+    const std::string workspace = temp_workspace("venv-python");
+    agent::ProcessOptions options;
+    options.workspace = workspace;
+    options.cwd = workspace;
+    options.allow_workspace_executables = true;
+    options.timeout_ms = 5000;
+    agent::ProcessResult result;
+    Error error = agent::run_command(
+        "python3 -c \"import sys; print(sys.executable)\"", options, result,
+        agent::CommandPolicy::Agent);
+    check(error.ok() && result.exit_status == 0,
+          "bare python3 is available for venv symlink fixture: " + error.message +
+              " out=" + result.stdout_text);
+    std::string system_python = result.stdout_text;
+    while (!system_python.empty() &&
+           (system_python.back() == '\n' || system_python.back() == '\r'))
+        system_python.pop_back();
+    check(!system_python.empty(), "python3 printed sys.executable");
+
+    const fs::path venv_bin = fs::path(workspace) / ".venv" / "bin";
+    fs::create_directories(venv_bin);
+    {
+        std::ofstream cfg(fs::path(workspace) / ".venv" / "pyvenv.cfg");
+        cfg << "home = /usr/bin\ninclude-system-site-packages = false\n";
+    }
+    const fs::path venv_python = venv_bin / "python";
+    ::unlink(venv_python.c_str());
+    check(::symlink(system_python.c_str(), venv_python.c_str()) == 0,
+          "created .venv/bin/python symlink");
+
+    result = {};
+    error = agent::run_command(
+        ".venv/bin/python -c \"import sys; print(sys.prefix)\"", options, result,
+        agent::CommandPolicy::Agent);
+    check(error.ok() && result.exit_status == 0,
+          "venv python symlink runs: " + error.message + " out=" + result.stdout_text);
+    check(result.stdout_text.find(".venv") != std::string::npos,
+          "venv python uses the workspace prefix: " + result.stdout_text);
+    check(result.resolved_executable.find(".venv") != std::string::npos,
+          "resolved executable keeps the venv path: " + result.resolved_executable);
+
+    const fs::path mismatched = venv_bin / "python3";
+    ::unlink(mismatched.c_str());
+    const char* not_python = "/usr/bin/true";
+    if (::access(not_python, X_OK) != 0) not_python = "/bin/true";
+    check(::symlink(not_python, mismatched.c_str()) == 0,
+          "created mismatched python3 symlink");
+    result = {};
+    error = agent::run_command(".venv/bin/python3 -c \"print(1)\"", options, result,
+                               agent::CommandPolicy::Agent);
+    check(!error.ok() && error.message.find("inside the workspace") != std::string::npos,
+          "python-named symlink to a non-python binary is denied: " + error.message);
+
+    const fs::path disguised = fs::path(workspace) / "evil";
+    ::unlink(disguised.c_str());
+    check(::symlink(system_python.c_str(), disguised.c_str()) == 0,
+          "created non-python basename symlink to python");
+    result = {};
+    error = agent::run_command("./evil -c \"print(1)\"", options, result,
+                               agent::CommandPolicy::Agent);
+    check(!error.ok(),
+          "non-python basename symlink to python is denied: " + error.message);
+
+    const fs::path protected_python =
+        fs::path(workspace) / ".ainiux-pr" / "bin" / "python";
+    fs::create_directories(protected_python.parent_path());
+    ::unlink(protected_python.c_str());
+    check(::symlink(system_python.c_str(), protected_python.c_str()) == 0,
+          "created protected python symlink");
+    result = {};
+    error = agent::run_command(".ainiux-pr/bin/python -c \"print(1)\"", options, result,
+                               agent::CommandPolicy::Agent);
+    check(!error.ok(),
+          "python under .ainiux-pr remains denied: " + error.message);
+
+    std::error_code ec;
+    fs::remove_all(workspace, ec);
+#endif
+}
+
 void test_interactive_approval_allows_then_denies() {
     const std::string workspace = temp_workspace("approve");
     agent::index::Options options;
@@ -828,6 +912,7 @@ void run_all() {
     test_read_only_command_classifier();
     test_tool_agent_python_and_security_deny();
     test_workspace_script_execution();
+    test_venv_python_symlink_stays_runnable();
     test_nested_ainiux_environment_forwards_keys();
     test_interactive_approval_allows_then_denies();
     test_approval_gate_resolve_and_cancel();

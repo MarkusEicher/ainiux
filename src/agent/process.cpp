@@ -1,6 +1,7 @@
 #include "agent/process.hpp"
 
 #include "agent/command_guard.hpp"
+#include "agent/project_paths.hpp"
 #include "agent/project_scripts.hpp"
 #include "agent/read_only_command.hpp"
 #include "platform/environment.hpp"
@@ -207,8 +208,89 @@ Error resolve_fixed_path_executable(const std::string& name, std::string& resolv
 #endif
 }
 
+bool versioned_interpreter_name(const std::string& command, const char* prefix) {
+    const std::size_t n = std::char_traits<char>::length(prefix);
+    if (command.size() <= n || command.compare(0, n, prefix) != 0 || command[n] != '.')
+        return false;
+    for (std::size_t i = n + 1; i < command.size(); ++i) {
+        if (command[i] != '.' && (command[i] < '0' || command[i] > '9')) return false;
+    }
+    return true;
+}
+
+bool python_interpreter_name(const std::string& command) {
+    return command == "python" || command == "python3" || command == "py" ||
+           command == "pypy" || command == "pypy3" ||
+           versioned_interpreter_name(command, "python") ||
+           versioned_interpreter_name(command, "python3") ||
+           versioned_interpreter_name(command, "pypy") ||
+           versioned_interpreter_name(command, "pypy3");
+}
+
+bool node_interpreter_name(const std::string& command) {
+    return command == "node" || command == "nodejs";
+}
+
+// True when `named` is a workspace python/node interpreter whose canonical
+// target is the same interpreter the fixed PATH would already run.
+bool path_interpreter_target_allowed(const std::string& workspace_name,
+                                     const fs::path& canonical_target) {
+    const std::string target_name =
+        normalized_command_basename(canonical_target.filename().u8string());
+    const bool python = python_interpreter_name(workspace_name) &&
+                        python_interpreter_name(target_name);
+    const bool node =
+        node_interpreter_name(workspace_name) && node_interpreter_name(target_name);
+    if (!python && !node) return false;
+    std::vector<std::string> names = {workspace_name, target_name};
+    if (python) {
+        names.push_back("python3");
+        names.push_back("python");
+        names.push_back("pypy3");
+        names.push_back("pypy");
+    } else {
+        names.push_back("node");
+        names.push_back("nodejs");
+    }
+    std::set<std::string> tried;
+    for (const std::string& name : names) {
+        if (name.empty() || !tried.insert(name).second) continue;
+        std::string found;
+        if (!resolve_fixed_path_executable(name, found).ok()) continue;
+        std::error_code equivalent_error;
+        if (fs::equivalent(fs::u8path(found), canonical_target, equivalent_error) &&
+            !equivalent_error)
+            return true;
+    }
+    return false;
+}
+
+Error workspace_named_executable(const fs::path& candidate,
+                                 const fs::path& workspace_root,
+                                 fs::path& named) {
+    std::error_code ec;
+    fs::path parent = candidate.parent_path();
+    if (parent.empty()) parent = fs::path(".");
+    const fs::path canonical_parent = fs::canonical(parent, ec);
+    if (ec || !inside_root(workspace_root, canonical_parent))
+        return {ErrorCode::BadArgs, "executable parent is outside the workspace"};
+    const std::string filename = candidate.filename().u8string();
+    if (filename.empty() || filename == "." || filename == "..")
+        return {ErrorCode::BadArgs, "executable path is missing a file name"};
+    named = canonical_parent / candidate.filename();
+    for (const fs::path& part : named.lexically_relative(workspace_root)) {
+        const std::string value = part.generic_u8string();
+        if (value == ".." || is_protected_state_dir_name(value))
+            return {ErrorCode::BadArgs, "executable path is in a protected directory"};
+    }
+    return ok_error();
+}
+
 // Accept an on-disk executable. When unrestricted is false, require it to live
-// under the workspace root (after symlink canonicalization).
+// under the workspace root after symlink canonicalization, except for project
+// python/node interpreter paths (typically `.venv/bin/python`) that symlink to
+// the same interpreter the fixed PATH already provides. Those keep the
+// workspace path so Python still loads the venv `pyvenv.cfg`.
 Error accept_executable_file(const fs::path& candidate,
                              const fs::path& workspace_root,
                              bool unrestricted,
@@ -231,6 +313,13 @@ Error accept_executable_file(const fs::path& candidate,
         return {ErrorCode::FileRead,
                 "could not resolve executable path: " + candidate.u8string() + ": " +
                     ec.message()};
+    fs::path named;
+    if (workspace_named_executable(candidate, workspace_root, named).ok() &&
+        path_interpreter_target_allowed(
+            normalized_command_basename(named.filename().u8string()), canonical)) {
+        resolved = named.u8string();
+        return ok_error();
+    }
     if (!unrestricted && !inside_root(workspace_root, canonical))
         return {ErrorCode::BadArgs,
                 "executable path must stay inside the workspace: " + canonical.u8string()};
