@@ -6,7 +6,7 @@ Ainiux is a C++17 command-line, terminal, and WebUI client for OpenAI and OpenAI
 
 You can use a local server such as LM Studio, llama-server, vllm or Ollama, a supported cloud provider such as OpenRouter, Google, Anthropic or Deepseek, or a custom OpenAI-compatible endpoint. Offline editing and conversion do not require a model.
 
-Current release: **v1.38**. See the [version history](docs/version-history.md) for earlier releases and [PLANS.md](PLANS.md) for unfinished work.
+Current release: **v1.39**. See the [version history](docs/version-history.md) for earlier releases and [PLANS.md](PLANS.md) for unfinished work.
 
 The name began with the author’s child Aini and echoes the Chinese phrase 爱你 *ài nǐ* (“love you”). The command and project spelling is `ainiux`. It also signifies the future aims of this ambitious project: versatile AI tool (current state) → Ainiux programming language (new programming language for AI era) → Ainiux operating system.
 
@@ -102,7 +102,8 @@ ainiux -w
 Chat, editor, and agent share terminal presentation and selectors, but not semantics. Switch explicitly with `/chat`, `/editor`, `/agent`, `/mode`, `/cycle`, or `Ctrl+G`. From an interactive agent turn you can hop to the editor or dired with `Ctrl+G` / `F4` without cancelling the turn; temporary editor hops keep the project session open. Leaving for chat or quitting finishes the agent session and disarms tools.
 
 Ainiux works especially well with **DeepSeek-V4-Flash**, **DeepSeek-V4-Pro**,
-**GPT-5.6**, and local **Qwen3.6** and **Gemma-4** model series. On the official
+**GPT-5.6**, and local **Qwen3.6** and **Gemma-4** model series. The catalog
+also includes Claude Sonnet/Haiku 5.5 and Mistral Large 4. On the official
 DeepSeek API the current Flash id is `deepseek-flash` (V4.1-Flash);
 `deepseek-v4-flash` remains valid on local servers and routers such as
 OpenRouter. These are the families used most heavily while developing and
@@ -110,7 +111,7 @@ testing the current agent, reasoning, tool-calling, and local OpenAI-compatible
 server paths. Exact model availability and identifiers still depend on the
 selected provider or local server.
 
-## Current v1.38 capabilities
+## Current v1.39 capabilities
 
 The product is actively developed, but its primary surfaces are implemented and share production-oriented foundations: incremental SSE parsing, explicit connect and request timeouts, cancellation during active streams, credential redaction, structured errors, bounded inputs, and RAII ownership of network, database, terminal, and file resources. A network chunk is never assumed to be one complete SSE event, and partial UTF-8 is kept out of terminal rendering.
 
@@ -171,7 +172,7 @@ On startup, choose a thread or press `Tab`/`Insert` for a new one. `Ctrl+L` reop
 
 See [Chat TUI](docs/chat.md) and the [keyboard reference](docs/keyboard-shortcuts.md).
 
-Saved chat data and project agent data are deliberately separated. Removing or moving a project’s `.ainiux-pr/` does not remove the personal chat library, and ordinary chat threads do not become agent transcripts when modes are switched. Explicit JSON chat import/export remains available when a portable file is preferable to the local SQLite library.
+Saved chat data and project agent data are deliberately separated. Removing or moving a project’s `.ainiux-pr/` does not remove the personal chat library, and ordinary chat threads do not become agent transcripts when modes are switched. TUI and WebUI share the same JSON chat export/import when a portable file is preferable to the local SQLite library.
 
 ### Standalone editor
 
@@ -185,7 +186,7 @@ Writable file buffers hold an advisory `FILE.LOCK` session and check for externa
 
 ### Local agent
 
-Interactive `-a` and one-shot `run` use project-local `.ainiux-pr/` state and native workspace tools. Act and Lead can read and modify the contained workspace subject to Confirm, Smart, or Yolo permissions and Guard classification. Interactive Guard “Ask” actions require `y`/`n` approval (including while you are reviewing in the editor after a mid-turn hop). Script Asks also offer **Review**, which opens that file in dired; `q` returns to the dialog. The interactive-only `ask` tool can pause a turn for one to six required single-choice questions, with optional comments and a built-in Other answer; headless run/plan never receive it. During a long interactive turn, `Ctrl+G` or `F4` opens the editor/dired so you can review dirty files and history-tinted change lines without cancelling tools or finishing the project session.
+Interactive `-a` and one-shot `run` use project-local `.ainiux-pr/` state and native workspace tools. Act and Lead can read and modify the contained workspace subject to Confirm, Smart, or Yolo permissions and Guard classification. Interactive Guard “Ask” actions require `y`/`n` approval (including while you are reviewing in the editor after a mid-turn hop). Script Asks also offer **Review**, which opens that file in dired; `q` returns to the dialog. The interactive-only `ask` tool can pause a turn for one to six required single-choice questions, with optional comments and a built-in Other answer; headless `run` never receives it. During a long interactive turn, `Ctrl+G` or `F4` opens the editor/dired so you can review dirty files and history-tinted change lines without cancelling tools or finishing the project session. Independent consecutive `read`/`search`/`fetch` waves and consecutive `run` waves share a default 4-thread pool (`agent.max_parallel_agents`, cap 32). `/statistics` shows estimated session token use, tool-call counts, and work time for this project.
 
 ```sh
 ainiux lmstudio -m MODEL -r "add focused tests for the parser"
@@ -194,7 +195,7 @@ ainiux lmstudio -m MODEL --security-review
 
 Interactive `/lead [clean|N|all]` and `/act` switch between separately cached model modes. The default Lead handoff keeps two recent Act prompts and 200 Unicode characters of each final response, without tool calls. `/goal CONDITION` sets a persistent completion condition and auto-continues until the model calls `goal_met` with evidence, stalls, reaches the turn cap, or is interrupted. `/compact fast|smart|summary` reduces model-visible context while preserving the full transcript on disk. `/compact all` resets model context to the system prompt, `AGENTS.md`, and tool definitions (logs stay in `.ainiux-pr`). Automatic compaction uses **75% of every known context window** unless explicitly configured otherwise.
 
-The optional code index is an optimized in-house C++ definitions index, not a compiler-grade parser or ground truth. It stores files, definitions, and static declaration importance, while lexical relevance stays primary. Agents must verify indexed locations against current source before editing.
+The optional code index is an optimized in-house C++ definitions index, not a compiler-grade parser or ground truth. It stores files, definitions, and static declaration importance, while lexical relevance stays primary. `glob` and `grep` search live workspace files of any type; `index`, `symbol`, and `outline` stay on the code index. Agents must verify indexed locations against current source before editing.
 
 ```sh
 ainiux --index-code
@@ -362,6 +363,7 @@ ordinary network outages retain it and trigger automatic reconnect. The token
 is never put in a cookie, URL, log, or rendered page content. The same-origin WUI covers
 chat threads, jobs and images, interactive agent/Guard flows, workspace review
 and mutations, revision-safe file editing/assist, and non-secret server status.
+Chat and Agent include TUI-style model pickers and workspace file insertion.
 Chat can queue a fetched page with `/fetch URL` or the Fetch button. The server
 stores HTML and Office documents as Markdown, keeps CSV and JSON as text, and
 accepts PNG, JPEG, and GIF only when the selected model allows images.
@@ -461,7 +463,7 @@ See [PLANS.md](PLANS.md) and [TODO.md](TODO.md) for active and deferred work.
 
 ## Documentation
 
-Start at the [documentation index](docs/README.md). It links current user guides, [dired mode](docs/dired-mode.md), keyboard and editor references, architecture decisions, security material, testing instructions, audits, and the compact [v0.0–v1.38 history](docs/version-history.md). Other agents that should invoke Ainiux from a shell can follow the [CLI skill](docs/skills/ainiux-cli/SKILL.md).
+Start at the [documentation index](docs/README.md). It links current user guides, [dired mode](docs/dired-mode.md), keyboard and editor references, architecture decisions, security material, testing instructions, audits, and the compact [v0.0–v1.39 history](docs/version-history.md). Other agents that should invoke Ainiux from a shell can follow the [CLI skill](docs/skills/ainiux-cli/SKILL.md).
 
 For the complete current option list, run:
 

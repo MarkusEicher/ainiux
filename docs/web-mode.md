@@ -1,6 +1,6 @@
 # WebUI
 
-Ainiux v1.38 includes the responsive WebUI as a major application mode. It is
+Ainiux v1.39 includes the responsive WebUI as a major application mode. It is
 served from `/ui/`, embedded in the executable, and uses only
 vanilla HTML, CSS, and JavaScript ES modules: there is no Node.js runtime,
 framework, npm bundle, CDN, hosted font, or external script.

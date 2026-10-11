@@ -21,7 +21,7 @@ core modules rather than being reimplemented by each UI or protocol surface.
 
 ## Current baseline
 
-Current release: **v1.38**. Linux and other POSIX-like source builds are the
+Current release: **v1.39**. Linux and other POSIX-like source builds are the
 primary supported path, Apple Silicon macOS source builds are supported, and a
 native Windows 10 1903+/Windows 11 x64 MSYS2 UCRT64 implementation is present.
 Windows remains unreleased until the parity gate in `docs/windows.md` passes.
@@ -39,7 +39,7 @@ Implemented entry points include:
 | Benchmark and judge | `benchmark` / `--benchmark`, `--grade` |
 | Code index and security review | `--index-code`, `--print-index`, `--clear-index`, `--security-review` |
 | Interactive agent | `agent` / `-a` / `--agent` |
-| One-shot Act and Plan | `run` / `-r` / `--run`, `plan` / `--plan` |
+| One-shot Act | `run` / `-r` / `--run` |
 | Image generation | `image` / `--image` |
 | WebUI | `-w` / `--webui`, `webserver` (current directory is the default workspace) |
 | Control API | `server` / `--server` |
@@ -57,8 +57,9 @@ compiled `openai_images`, `replicate_predictions`, `fal_queue`, and
 - Ordinary chat never receives workspace tools. Agent mode is explicit and
   separate, although chat, editor, and agent share terminal presentation.
 - Agent Act is the default task policy. Fresh projects use Smart permissions;
-  Confirm and Yolo are explicit choices. Plan permits research but limits writes
-  to planning documents. `/goal` and `goal_met` are implemented.
+  Confirm and Yolo are explicit choices. Lead is an independent full-authority
+  model mode with bounded tool-free handoffs. `/goal` and `goal_met` are
+  implemented. One-shot Plan is retired.
 - Project agent state stays under `.ainiux-pr/`; user chat data and installed MCP
   configuration stay under `~/.ainiux/`.
 - The code index is an optional definitions-only navigation hint. `index`,
@@ -268,7 +269,7 @@ agent loops, approval decisions, or filesystem mutation logic in a UI.
 - Guard, permission mode, task policy, workspace containment, approvals, and tool
   logs remain independent enforcement layers. Headless Ask decisions deny.
 - Native tools use the shipped short names. Removed long aliases stay unknown.
-  Installed MCP tools are qualified and available only to agent/run/plan.
+  Installed MCP tools are qualified and available only to agent/run.
 - Extend indexing only under `src/agent/index/`. Keep lightweight lexical scanners,
   deterministic ranking, and definitions-only storage; do not add compiler/LSP
   dependencies, reference graphs, or automatic request-context injection.

@@ -33,7 +33,7 @@ approved specification says otherwise.
 
 ## Current foundation
 
-Implementation status (2026-09-23): **v1.38**.
+Implementation status (2026-10-11): **v1.39**.
 
 The main product surfaces are shipped. The current foundation includes
 Chat Completions and Responses, provider/model catalogs, cancellable streaming,
@@ -61,6 +61,14 @@ v1.38 promotes the WebUI to a major mode with `-w`, standalone `--webui`, and
 `webserver` entry points, all defaulting to the current directory when no
 workspace is supplied. It also hardens browser mutations with an ephemeral CSRF
 token and extends the model catalog for GPT-6 and Claude Opus 5 families.
+
+v1.39 replaces restricted Plan with independent Act/Lead model modes and retires
+one-shot Plan. It adds interactive questionnaires and `/statistics`, runs
+independent in-turn tools in a default 4-thread pool, lets glob/grep search any
+live file type, and extends Smart auto-allows for everyday git, interpreter, and
+toolchain inspection. The catalog adds Claude Sonnet/Haiku 5.5 and Mistral
+Large 4. TUI/WebUI chat export is unified; the WebUI adds model pickers and
+workspace file insertion.
 
 Native Windows x64 implementation is present but unreleased pending the UCRT64
 parity gate. The code index intentionally stores definitions and static importance,

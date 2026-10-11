@@ -23,7 +23,7 @@ This index separates current usage guides from design records, roadmaps, and poi
 | [WebUI](web-mode.md) | Start the major browser mode with `-w`, `--webui`, or `webserver` for chat, jobs, Agent/Guard, media generation, and revision-safe workspace work |
 | [Security](security.md) | Credential, persistence, fetch, attachment, image/video generation, and agent boundaries |
 | [Testing](../TESTING.md) | Test targets and selection policy |
-| [Version history](version-history.md) | Compact v0.0–v1.38 release timeline |
+| [Version history](version-history.md) | Compact v0.0–v1.39 release timeline |
 
 ## Architecture and implementation references
 
