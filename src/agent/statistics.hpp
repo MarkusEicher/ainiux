@@ -27,7 +27,7 @@ struct AgentSessionStatistics {
 // "1 hour, 2 minutes, 5 seconds".
 std::string format_agent_elapsed_hms(long long elapsed_ms);
 
-// GitHub-flavored Markdown two-column table for TUI notices and WebUI markdown.
+// Unicode-box two-column table for TUI notices (same printer as /show-index).
 std::string format_agent_statistics_table(const AgentSessionStatistics& stats);
 
 // Control-API JSON: numeric fields plus elapsed_text and markdown.

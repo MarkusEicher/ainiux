@@ -106,9 +106,7 @@ Error read_bool_field(const json::Value& object, const char* key, bool& out) {
     return ok_error();
 }
 
-}  // namespace
-
-std::string format_agent_elapsed_hms(long long elapsed_ms) {
+std::string elapsed_hms(long long elapsed_ms) {
     if (elapsed_ms < 0) elapsed_ms = 0;
     const long long total_seconds = elapsed_ms / 1000;
     const long long hours = total_seconds / 3600;
@@ -119,7 +117,8 @@ std::string format_agent_elapsed_hms(long long elapsed_ms) {
            unit_phrase(seconds, "second", "seconds");
 }
 
-std::string format_agent_statistics_table(const AgentSessionStatistics& stats) {
+std::string statistics_table(const AgentSessionStatistics& stats,
+                             markdown::TableStyle style) {
     double hit = 0.0;
     const std::string hit_text =
         cache_hit_ratio(stats, hit) ? format_percentage(hit) : std::string("n/a");
@@ -136,10 +135,19 @@ std::string format_agent_statistics_table(const AgentSessionStatistics& stats) {
         {"Tool calls", std::to_string(stats.tool_calls)},
         {"Failed tool calls", std::to_string(stats.failed_tool_calls)},
         {"Fail percentage", format_percentage(fail_percentage(stats))},
-        {"Time spent", format_agent_elapsed_hms(stats.elapsed_ms)},
+        {"Time spent", elapsed_hms(stats.elapsed_ms)},
     };
-    return markdown::format_table(headers, aligns, rows,
-                                  markdown::TableStyle::PaddedGfm);
+    return markdown::format_table(headers, aligns, rows, style);
+}
+
+}  // namespace
+
+std::string format_agent_elapsed_hms(long long elapsed_ms) {
+    return elapsed_hms(elapsed_ms);
+}
+
+std::string format_agent_statistics_table(const AgentSessionStatistics& stats) {
+    return statistics_table(stats, markdown::TableStyle::UnicodeBox);
 }
 
 std::string format_agent_statistics_json(const AgentSessionStatistics& stats) {
@@ -157,8 +165,9 @@ std::string format_agent_statistics_json(const AgentSessionStatistics& stats) {
             json_int(static_cast<long long>(stats.failed_tool_calls));
     json += ",\"fail_percentage\":" + json_percentage_number(fail_percentage(stats));
     json += ",\"elapsed_ms\":" + json_int(stats.elapsed_ms);
-    json += ",\"elapsed_text\":" + json::quote(format_agent_elapsed_hms(stats.elapsed_ms));
-    json += ",\"markdown\":" + json::quote(format_agent_statistics_table(stats));
+    json += ",\"elapsed_text\":" + json::quote(elapsed_hms(stats.elapsed_ms));
+    json += ",\"markdown\":" +
+            json::quote(statistics_table(stats, markdown::TableStyle::PaddedGfm));
     json += "}";
     return json;
 }

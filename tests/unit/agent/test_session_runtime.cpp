@@ -1384,6 +1384,9 @@ void test_agent_session_statistics_format_and_persist() {
 
     agent::AgentSessionStatistics empty;
     const std::string empty_table = agent::format_agent_statistics_table(empty);
+    check(empty_table.find(u8"┌") == 0 && empty_table.find(u8"└") != std::string::npos &&
+              empty_table.find("| Metric") == std::string::npos,
+          "statistics table uses the Unicode box printer, not raw GFM");
     check(empty_table.find("Cached input tokens") != std::string::npos &&
               empty_table.find("Fresh input tokens") != std::string::npos &&
               empty_table.find("Output tokens") != std::string::npos &&
@@ -1454,8 +1457,9 @@ void test_agent_session_statistics_format_and_persist() {
               json.find("\"fail_percentage\":25.0") != std::string::npos &&
               json.find("\"elapsed_text\":\"1 hour, 2 minutes, 5 seconds\"") !=
                   std::string::npos &&
-              json.find("\"markdown\":") != std::string::npos,
-          "statistics JSON includes ratio, elapsed text, and markdown table");
+              json.find("\"markdown\":") != std::string::npos &&
+              json.find("| Metric") != std::string::npos,
+          "statistics JSON includes ratio, elapsed text, and GFM markdown for WebUI");
 
     const std::string workspace = temp_workspace("session-statistics");
     agent::AgentSessionRuntime runtime;
