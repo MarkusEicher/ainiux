@@ -2,6 +2,22 @@
 
 These records explain implementation rationale. For current usage, start at the [documentation index](README.md).
 
+## Smart command permissions: default allowance (2026-10-12)
+
+Smart allows project commands after structural, Guard and path checks unless an
+explicit risk matches. Narrow complete-argv allowlists produced repeated approval
+requests for harmless Git options and staging; adding exemptions perpetuated that
+failure. Restricted/read-only modes retain their own allowlists. Shared Guard rules
+identify destructive operations, publishing, listeners and environment changes,
+and shared command-scope parsing separates real file inputs/outputs from patterns,
+formats and Git queries. Unknown commands or options alone are not a risk.
+
+Only `.ainiux-pr` is protected from direct Agent access inside its project. VCS,
+virtual-environment, cache and profile-looking folders remain ordinary project
+files; discovery exclusions and protected external metadata stay separate.
+Ordinary commits and fetch run automatically, while push and history/working-file
+replacement ask. Commands remain argv-only, not OS-sandboxed.
+
 ## C++17 and Makefile
 
 The implementation uses C++17 and a plain Makefile across POSIX-like systems and
@@ -143,7 +159,7 @@ The gate owns copied request/response data and opaque IDs, validates every
 answer before waking the tool worker, and remains pending after malformed or
 stale client input. Accepted answers flow through the ordinary tool result and
 conversation transcript; no second persistence schema is introduced.
-- Agent git policy is broader than security-review so a user-approved Ask can actually run (still no shell). Smart auto-allows read-only porcelain (`status`/`diff`/`log`/`show`/`rev-list`/`remote -v`, `check-ignore`, `ls-files`, and listing forms) after skipping `git -c` pager globals so a model that copies the runner's injected `core.pager=cat` does not get an Ask. Git pathspecs are queries rather than opened files, so names such as `.venv` and `.ainiux-pr` auto-allow; `git -C` and native `ls`/`cat` of `.ainiux-pr` stay denied. `run` common-safety does not scan every argv token as a path (`g++ -I../include` is not traversal). `git -c alias.*` and `git config` stay denied.
+- Agent git policy is broader than security-review so a user-approved Ask can actually run (still no shell). Smart auto-allows read-only porcelain (`status`/`diff`/`log`/`show`/`rev-list`/`remote -v`, `check-ignore`, `ls-files`, and listing forms) after skipping `git -c` pager globals so a model that copies the runner's injected `core.pager=cat` does not get an Ask. Git pathspecs are queries rather than opened files, so names such as `.venv` and `.ainiux-pr` auto-allow; `git -C` and native `ls`/`cat` of `.ainiux-pr` stay denied. `run` common-safety does not scan every argv token as a path (file-valued compiler options now receive independent scope checks). `git -c alias.*` and `git config` stay denied.
 
 ## Workspace path containment for agent writes
 
@@ -175,7 +191,7 @@ Reusable agent helpers live under **`scripts/ainiux/`** as ordinary workspace fi
 
 Trusted prompts: agent sessions use the bounded `resources/prompts/agent_prompt.md` plus a static native/XML appendix. The initial Act/Plan state is a separate Ainiux control message; later switches append controls and, only when changed, refreshed framed root `AGENTS.md` instructions. They never rewrite the earlier model-visible prefix. Compaction rebuilds the stable base with only the active mode. Native Act and Plan requests advertise the same ordered tool superset, while `MutationPolicy` enforces mode authority. `master_prompt.md` and `security_prompt.md` are retained exclusively for security review and still compose with the historical exact `master + "\n" + security` byte sequence. Security-review keeps its own bounded finalization loop and retry helper so its acceptance behavior stays stable. Diagnostic JSONL logging is shared (`ReviewLogger`) with a run-kind parameter so security-review and agent logs live under separate directories with the same live-flush / finalize semantics.
 
-Agent tool authorization uses `MutationPolicy::{Disabled,PlanningDocuments,Full}`. `run` has three distinct policies: security-review retains its narrow index-snapshot inspection allowlist, Plan permits only complete argv forms accepted by a conservative built-in read-only classifier, and Act retains the broad Guard-controlled direct runner. Smart reuses the Plan classifier, the workspace-interpreter classifier, and classified in-project filesystem commands as approval exemptions after Guard and canonical command-aware path validation; Confirm still asks for every executable command and Yolo is unchanged. Unknown commands/options therefore ask in Act/Smart but cannot be elevated in Plan. Redirects, substitutions, pipes, and other shell syntax remain structural errors rather than inputs to a partial shell/output-path parser. Plan retains configured network tools and preflights every edit/patch destination before mutation. Its only writable destinations are root `PLANS.md`, `PLAN.md`, `TODO.md`, `AGENTS.md`, and case-sensitive `.md` files under an existing `docs/plans/` tree.
+Agent tool authorization uses `MutationPolicy::{Disabled,PlanningDocuments,Full}`. `run` has three distinct policies: security-review retains its narrow index-snapshot inspection allowlist, Plan permits only complete argv forms accepted by a conservative built-in read-only classifier, and Act retains the broad Guard-controlled direct runner. The initial Smart policy reused these narrow classifiers as approval exemptions. The 2026-10-12 default-allow decision above supersedes that exemption policy: unknown commands/options alone no longer ask in Smart. Restricted/read-only policy retains its allowlists. Confirm still asks for executable commands and Yolo retains its behavior. Redirects, substitutions, pipes, and other shell syntax remain structural errors rather than inputs to a partial shell/output-path parser. Plan retains configured network tools and preflights every edit/patch destination before mutation. Its only writable destinations are root `PLANS.md`, `PLAN.md`, `TODO.md`, `AGENTS.md`, and case-sensitive `.md` files under an existing `docs/plans/` tree.
 
 Review workers receive an explicit per-batch `EXPECTED_COVERAGE` array and normally terminate with a schema-defined `submit_security_review` call. The loop has a bounded finalization phase: it reminds an over-exploring model after round 12, exposes only submission from round 16, and stops after round 20 or 64 calls. Free-form final content is retained for compatible endpoints, but normalization only extracts one already-valid JSON object from common preamble/fence framing; it never repairs syntax and rejects multiple objects.
 

@@ -128,6 +128,164 @@ agent::ReadToolRegistry make_registry(const std::string& workspace,
     return tools;
 }
 
+void test_smart_default_allow_project_workflow() {
+    const std::string workspace = write_temp_workspace("smart-default-allow");
+    const fs::path root(workspace);
+    std::vector<agent::GuardApprovalRequest> approvals;
+    agent::ReadToolRegistry smart = make_registry(
+        workspace, agent::MutationPolicy::Full, false,
+        [&](const agent::GuardApprovalRequest& request, runtime::CancellationToken) {
+            approvals.push_back(request);
+            return agent::GuardApprovalDecision::Deny;
+        }, agent::PermissionMode::Smart, true);
+    auto run = [&](const std::string& command) {
+        return smart.execute("run", "{\"command\":" + json_string(command) + "}");
+    };
+    auto succeeds = [&](const std::string& command) {
+        const std::string result = run(command);
+        const json::ParseResult parsed = json::parse(result);
+        const json::Value* data = parsed.value.get("data");
+        const json::Value* status = data == nullptr ? nullptr : data->get("exit_status");
+        check(json_ok(result) && status != nullptr && status->number == 0,
+              "Smart project command executes successfully: " + command + " " + result);
+        check(approvals.empty(), "ordinary command must not invoke approval: " + command);
+    };
+    succeeds("git init");
+    write_text(root / ".gitignore", ".ainiux-pr/\n.venv/\n.tools/\nremote.git/\n");
+    const std::vector<std::string> directories = {".venv", ".tools", ".pytest_cache",
+        ".probe", "node_modules", "build", ".git", ".hg", ".svn", ".ainiux", "arbitrary-folder"};
+    for (const auto& directory : directories) {
+        fs::create_directories(root / directory);
+        const std::string file = directory + "/ainiux-permission-test.txt";
+        check(json_ok(smart.execute("write", "{\"path\":" + json_string(file) +
+            ",\"content\":\"project-file\"}")), "Smart writes in " + directory);
+        check(json_ok(smart.execute("read", "{\"path\":" + json_string(file) + "}")),
+              "Smart reads in " + directory);
+        check(json_ok(smart.execute("ls", "{\"path\":" + json_string(directory) + "}")),
+              "Smart lists " + directory);
+        check(json_ok(smart.execute("write", "{\"path\":" + json_string(directory + "/new/child.txt") +
+            ",\"content\":\"project-file\",\"create_dirs\":true}")),
+              "Smart creates missing parents inside " + directory);
+#if !defined(_WIN32)
+        succeeds("cat " + file);
+#endif
+    }
+    const std::vector<std::string> ordinary = {
+        "git ls-files --directory -o --exclude-standard",
+        "git ls-files -s src/hello.cpp", "git ls-files -z --stage --full-name",
+        "git -c core.pager=cat -c pager.show=false -c pager.diff=false -c diff.external= ls-files --directory -o --exclude-standard",
+        "git -C . ls-files --debug --eol --deduplicate",
+        "git add -A", "git -c user.name=Ainiux -c user.email=tests@example.invalid commit -m initial",
+        "git diff --word-diff --color=never", "git log --decorate --oneline -1",
+        "git branch feature", "git tag checkpoint",
+        "git restore --staged -- src/hello.cpp", "git reset -- src/hello.cpp",
+        "git add -- src/hello.cpp", "git init --bare remote.git"
+    };
+    for (const auto& command : ordinary) succeeds(command);
+    // Seed a local remote through the lower-level runner with explicit fixture
+    // approval; the workflow under test must never contact an external service.
+    agent::ProcessOptions seed;
+    seed.workspace = workspace;
+    seed.on_guard_ask = [](const agent::GuardApprovalRequest&, runtime::CancellationToken) {
+        return agent::GuardApprovalDecision::Allow;
+    };
+    agent::ProcessResult pushed;
+    const Error push_error = agent::run_command("git push ./remote.git HEAD:refs/heads/main",
+                                               seed, pushed, agent::CommandPolicy::Agent);
+    check(push_error.ok() && pushed.exit_status == 0, "seed local Git fetch fixture: " + pushed.stderr_text);
+    succeeds("git fetch ./remote.git main");
+    fs::create_directories(root / "src" / "nested");
+    succeeds("git -C src -C nested ls-files --full-name");
+#if !defined(_WIN32)
+    succeeds("find . -type f -not -path '*/.git/*' -not -path '*/.ainiux-pr/*' -not -path '*/.venv/*' -printf '%s %p\\n'");
+    succeeds("du -sh .git .venv .tools");
+    succeeds("touch --no-create missing-project-file");
+    succeeds("printf '%s\\n' 'a/b' '*/.ainiux-pr/*'");
+    for (int repeat = 0; repeat < 3; ++repeat) succeeds("git ls-files --directory -o --exclude-standard");
+    const std::string missing = run("cat missing-project-file");
+    check(json_error_code(missing) != "policy_denied" &&
+              json_data_string(missing, "stderr").find("missing-project-file") != std::string::npos,
+          "missing contained operands reach the executable's normal error");
+    agent::ProcessResult python;
+    const Error python_error = agent::run_command("python3 -c 'print(1)'", seed, python,
+                                                 agent::CommandPolicy::Agent);
+    if (python_error.ok() && python.exit_status == 0) {
+        fs::create_directories(root / ".venv" / "bin");
+        fs::create_symlink(python.resolved_executable, root / ".venv" / "bin" / "python");
+        succeeds(".venv/bin/python -c 'skip={\".git\",\".venv\",\".tools\"}; print(len(skip))'");
+    }
+#endif
+    agent::ReadToolRegistry headless = make_registry(workspace, agent::MutationPolicy::Full,
+        false, {}, agent::PermissionMode::Smart, true);
+    check(json_ok(headless.execute("run", R"({"command":"git ls-files --directory -o --exclude-standard"})")),
+          "headless Smart executes broad inspection without an approval UI");
+    check(json_ok(headless.execute("run", R"({"command":"git add -A"})")),
+          "headless Smart stages without an approval UI");
+
+    const std::vector<std::string> risky = {"git push ./remote.git main", "git reset --hard",
+        "git commit --amend -m rewrite", "git branch -vD feature", "git restore src/hello.cpp",
+        "git rebase main", "python3 -m http.server"};
+    for (const auto& command : risky) {
+        const std::size_t before = approvals.size();
+        check(json_error_code(run(command)) == "policy_denied" && approvals.size() == before + 1,
+              "identified risk produces one approval and denial: " + command);
+        if (approvals.size() > before)
+            check(approvals.back().message.find("Commands always require") == std::string::npos,
+                  "risk approval explains its reason");
+    }
+#if !defined(_WIN32)
+    const std::size_t before_tree = approvals.size();
+    check(json_error_code(run("rm -rfv -- .venv")) == "policy_denied" &&
+              approvals.size() == before_tree + 1 && fs::is_directory(root / ".venv"),
+          "extra rm flags cannot bypass nonempty-directory approval");
+    const fs::path external = root.parent_path() / (root.filename().string() + "-external");
+    fs::create_directories(external);
+    write_text(external / "ignore", "anything\n");
+    for (const auto& command : {"rg --ignore-file=" + (external / "ignore").string() + " project src",
+                               "git diff --output=" + (external / "output").string()}) {
+        const std::size_t before = approvals.size();
+        check(json_error_code(run(command)) == "policy_denied" && approvals.size() == before + 1,
+              "external file option requests one approval: " + command);
+    }
+    check(!fs::exists(external / "output"), "denied output option does not create a file");
+    fs::create_directories(root / "scripts" / "ainiux");
+    write_text(root / "scripts" / "ainiux" / "scope.sh", "printf '%s\\n' \"$@\"\n");
+    int script_asks = 0;
+    agent::ReadToolRegistry script_confirm = make_registry(workspace, agent::MutationPolicy::Full,
+        false, [&](const agent::GuardApprovalRequest& request, runtime::CancellationToken) {
+            ++script_asks;
+            check(request.message.find("outside the project") != std::string::npos &&
+                      request.message.find("scope.sh") != std::string::npos,
+                  "one script approval includes content and external scope");
+            return agent::GuardApprovalDecision::Allow;
+        }, agent::PermissionMode::Confirm, true);
+    check(json_error_code(script_confirm.execute("run",
+              R"({"command":"bash scripts/ainiux/scope.sh .ainiux-pr/agent.sqlite"})")) == "policy_denied" &&
+              script_asks == 0, "script paths are validated before any content approval");
+    check(json_ok(script_confirm.execute("run", "{\"command\":" +
+              json_string("bash scripts/ainiux/scope.sh " + (external / "ignore").string()) + "}")) &&
+              script_asks == 1, "Confirm consolidates script content and external access approval");
+    fs::create_symlink(external, root / "escape-link");
+    const std::size_t before_link = approvals.size();
+    check(json_error_code(run("cat escape-link/not-created")) == "policy_denied" &&
+              approvals.size() == before_link, "missing paths through symlinks remain denied");
+    std::error_code ignored;
+    fs::remove_all(external, ignored);
+#endif
+    const std::size_t before_state = approvals.size();
+    check(json_error_code(run("git -C .ainiux-pr ls-files --directory")) == "policy_denied" &&
+              json_error_code(run("git add .ainiux-pr/agent.sqlite")) == "policy_denied" &&
+              approvals.size() == before_state, "protected state cannot be elevated");
+    agent::ReadToolRegistry cancelled = make_registry(workspace, agent::MutationPolicy::Full,
+        false, [](const agent::GuardApprovalRequest&, runtime::CancellationToken) {
+            return agent::GuardApprovalDecision::Cancelled;
+        }, agent::PermissionMode::Smart, true);
+    check(json_error_code(cancelled.execute("run", R"({"command":"git reset --hard"})")) == "cancelled",
+          "cancelling risky-command approval prevents execution");
+    std::error_code ec;
+    fs::remove_all(workspace, ec);
+}
+
 agent::ReadToolRegistry make_registry(const std::string& workspace,
                                       bool allow_mutations,
                                       bool auto_approve_create_dirs);
@@ -311,9 +469,8 @@ void test_permission_modes_and_native_path_tools() {
           "smart mode auto-approves workspace make test");
     const std::string smart_cargo =
         smart.execute("run", R"({"command":"cargo test"})");
-    check(!json_ok(smart_cargo) &&
-              json_error_code(smart_cargo) == "policy_denied",
-          "smart mode still requires approval for cargo test");
+    check(json_error_code(smart_cargo) != "policy_denied",
+          "smart mode accepts unfamiliar project commands without an allowlist");
     const std::string smart_external = smart.execute(
         "run",
         "{\"command\":\"pwd\",\"cwd\":" +
@@ -399,10 +556,10 @@ void test_permission_modes_and_native_path_tools() {
               smart_asks.load() == 0,
           "smart mode does not prompt for g++");
     check(json_error_code(smart_prompting.execute(
-              "run", R"({"command":"g++ -I../include -c src/hello.cpp"})")) !=
+              "run", R"({"command":"g++ -I../include -c src/hello.cpp"})")) ==
                   "policy_denied" &&
               smart_asks.load() == 0,
-          "smart mode does not treat compiler -I../ flags as traversal");
+          "smart mode checks escaping compiler include paths before execution");
     check(json_error_code(smart_prompting.execute(
               "run",
               R"({"command":"git check-ignore -v .venv .tools .probe .ainiux-pr"})")) !=
@@ -426,24 +583,24 @@ void test_permission_modes_and_native_path_tools() {
               "run", R"({"command":"dotnet test"})")) != "policy_denied" &&
               smart_asks.load() == 0,
           "smart mode does not prompt for dotnet test");
-    check(!json_ok(smart_prompting.execute(
-              "run", R"({"command":"cargo test"})")) &&
-              smart_asks.load() == 1,
-          "smart mode prompts for cargo test");
+    check(json_error_code(smart_prompting.execute(
+              "run", R"({"command":"cargo test"})")) != "policy_denied" &&
+              smart_asks.load() == 0,
+          "smart mode does not prompt for an unfamiliar build command");
     check(!json_ok(smart_prompting.execute(
               "run",
               R"({"command":"python3 -c \"print(open('/etc/passwd').read())\""})")) &&
-              smart_asks.load() == 2,
+              smart_asks.load() == 1,
           "smart mode prompts for python -c with an absolute path literal");
     check(!json_ok(smart_prompting.execute(
               "run", R"({"command":"node --inspect src/hello.js"})")) &&
-              smart_asks.load() == 3,
+              smart_asks.load() == 2,
           "smart mode prompts for node --inspect");
     check(!json_ok(smart_prompting.execute(
               "run",
               "{\"command\":\"pwd\",\"cwd\":" +
                   json_string((temp_parent / "nested").string()) + "}")) &&
-              smart_asks.load() == 4,
+              smart_asks.load() == 3,
           "smart mode prompts for an external-path read-only command");
     const std::string absolute_project_file = smart.execute(
         "run",
@@ -3129,6 +3286,7 @@ void test_ask_tool_exposure_normalization_and_decline() {
 
 void run_all() {
     test_permission_modes_and_native_path_tools();
+    test_smart_default_allow_project_workflow();
     test_tool_schemas_gemini_compatible();
     test_external_file_access_requires_one_shot_approval();
     test_glob_recursive_root_and_nested();

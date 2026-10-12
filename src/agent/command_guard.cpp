@@ -181,37 +181,66 @@ GuardResult evaluate_command_guard(const std::vector<std::string>& arguments) {
         const std::size_t sub_index = git_subcommand_index(arguments);
         if (sub_index >= arguments.size()) return {};
         const std::string sub = lowercase(arguments[sub_index]);
+        auto flag = [&](const std::string& long_name, char short_name = '\0') {
+            for (std::size_t i = sub_index + 1; i < arguments.size(); ++i) {
+                const std::string& arg = arguments[i];
+                if (arg == "--") break;
+                if (!long_name.empty() && (arg == long_name ||
+                    arg.rfind(long_name + "=", 0) == 0))
+                    return true;
+                if (arg.size() > 1 && arg[0] == '-' && arg[1] != '-') {
+                    const std::string value_flags = sub == "commit" || sub == "tag" ? "mF" :
+                                                    sub == "checkout" ? "bB" :
+                                                    sub == "switch" ? "cC" : "";
+                    for (std::size_t j = 1; j < arg.size(); ++j) {
+                        if (short_name != '\0' && arg[j] == short_name) return true;
+                        if (value_flags.find(arg[j]) != std::string::npos) {
+                            if (j + 1 == arg.size() && i + 1 < arguments.size()) ++i;
+                            break;
+                        }
+                    }
+                }
+                // A message/file/format value is not a cluster of flags.
+                if (arg == "--message" ||
+                    arg == "--file" || arg == "--format") {
+                    if (i + 1 < arguments.size()) ++i;
+                }
+            }
+            return false;
+        };
+        if (sub == "push")
+            return ask("ask_on_git_publish", "git push publishes repository changes");
+        if (sub == "pull" || sub == "merge" || sub == "rebase" ||
+            sub == "cherry-pick" || sub == "revert" || sub == "am")
+            return ask("ask_on_destructive_git",
+                       "git " + sub + " can rewrite history or replace working files");
+        if (sub == "commit" && flag("--amend"))
+            return ask("ask_on_destructive_git", "git commit --amend rewrites a commit");
         if (sub == "reset") {
-            for (const std::string& arg : arguments)
-                if (arg == "--hard" || arg == "--merge")
-                    return ask("ask_on_destructive_git",
-                               "refusing destructive git reset (" + arg + ")");
+            const bool path_only = std::find(arguments.begin() + sub_index + 1,
+                                             arguments.end(), "--") != arguments.end();
+            if (!path_only || flag("--hard") || flag("--merge") || flag("--keep") ||
+                flag("--soft"))
+                return ask("ask_on_destructive_git", "git reset can rewrite history or discard changes");
         }
         if (sub == "clean") {
-            for (const std::string& arg : arguments) {
-                if (arg == "-f" || arg == "-fd" || arg == "-fdx" || arg == "-fx" ||
-                    arg == "-xffd" || arg.find('f') != std::string::npos)
-                    return ask("ask_on_destructive_git",
-                               "refusing destructive git clean");
-            }
-        }
-        if (sub == "push") {
-            for (const std::string& arg : arguments)
-                if (arg == "--force" || arg == "-f" || arg == "--force-with-lease")
-                    return ask("ask_on_destructive_git",
-                               "refusing force git push");
+            if (!flag("--dry-run", 'n'))
+                return ask("ask_on_destructive_git", "git clean deletes untracked files");
         }
         if (sub == "branch" || sub == "tag") {
-            for (const std::string& arg : arguments)
-                if (arg == "-D" || arg == "--delete" || arg == "-d")
-                    return ask("ask_on_destructive_git",
-                               "refusing git branch/tag delete via run_command");
+            if (flag("--delete", 'd') || flag({}, 'D') || flag("--force", 'f') ||
+                flag({}, 'M') || flag({}, 'C'))
+                return ask("ask_on_destructive_git", "git branch/tag deletes or replaces references");
         }
         if (sub == "checkout" || sub == "restore" || sub == "switch") {
-            for (const std::string& arg : arguments)
-                if (arg == "--force" || arg == "-f" || arg == "--ours" || arg == "--theirs")
-                    return ask("ask_on_destructive_git",
-                               "refusing forced git " + sub);
+            const bool stage_only = sub == "restore" && flag("--staged", 'S') &&
+                                    !flag("--worktree", 'W');
+            const bool new_branch = (sub == "checkout" && flag({}, 'b')) ||
+                                    (sub == "switch" && flag("--create", 'c'));
+            if ((!stage_only && !new_branch) || flag("--force", 'f') ||
+                flag("--discard-changes") || flag("--ours") || flag("--theirs") ||
+                flag({}, 'B') || flag("--force-create", 'C'))
+                return ask("ask_on_destructive_git", "git " + sub + " can replace working files");
         }
     }
 
@@ -407,7 +436,7 @@ GuardResult evaluate_command_guard(const std::vector<std::string>& arguments) {
         }
     }
 
-    return {};
+    return evaluate_workspace_command_risk(arguments);
 }
 
 GuardResult finalize_guard_for_headless(GuardResult result) {

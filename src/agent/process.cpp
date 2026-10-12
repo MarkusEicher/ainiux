@@ -280,7 +280,7 @@ Error workspace_named_executable(const fs::path& candidate,
     named = canonical_parent / candidate.filename();
     for (const fs::path& part : named.lexically_relative(workspace_root)) {
         const std::string value = part.generic_u8string();
-        if (value == ".." || is_protected_state_dir_name(value))
+        if (value == ".." || is_project_state_dir_name(value))
             return {ErrorCode::BadArgs, "executable path is in a protected directory"};
     }
     return ok_error();
@@ -314,7 +314,15 @@ Error accept_executable_file(const fs::path& candidate,
                 "could not resolve executable path: " + candidate.u8string() + ": " +
                     ec.message()};
     fs::path named;
-    if (workspace_named_executable(candidate, workspace_root, named).ok() &&
+    const Error named_error = workspace_named_executable(candidate, workspace_root, named);
+    if (!named_error.ok() && inside_root(workspace_root, candidate.lexically_normal()))
+        return named_error;
+    if (inside_root(workspace_root, canonical)) {
+        for (const auto& part : canonical.lexically_relative(workspace_root))
+            if (is_project_state_dir_name(part.u8string()))
+                return {ErrorCode::BadArgs, "executable path is in protected agent state"};
+    }
+    if (named_error.ok() &&
         path_interpreter_target_allowed(
             normalized_command_basename(named.filename().u8string()), canonical)) {
         resolved = named.u8string();
@@ -816,7 +824,7 @@ Error enforce_agent_policy(std::vector<std::string>& args,
         guard_rule_id.clear();
     }
 
-    const std::string& command = args.front();
+    const std::string command = normalized_command_basename(args.front());
     if (command == "command" &&
         (args.size() < 3 || args[1] != "-v"))
         return {ErrorCode::BadArgs,

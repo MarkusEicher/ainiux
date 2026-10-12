@@ -22,8 +22,9 @@ inline bool is_project_state_dir_name(const std::string& name) {
     return normalized_protected_name(name) == kProjectStateDirName;
 }
 
-// True if name is a path component that agent tools must not mutate/escape into.
-// Includes the project state dir and the user-profile name if it appears in a tree.
+// Discovery exclusions and protected external metadata. Inside the active project,
+// Agent access protects only is_project_state_dir_name(); VCS/profile-looking
+// directories are ordinary project files, not a permission boundary.
 inline bool is_protected_state_dir_name(const std::string& name) {
     const std::string compared = normalized_protected_name(name);
     return compared == kProjectStateDirName || compared == ".ainiux" || compared == ".git" ||

@@ -24,7 +24,7 @@ methodology.
 | `symbol` | `query` | Ranked indexed definitions. Hidden without an index. |
 | `outline` | `path` | Declarations in one file. Hidden without an index. |
 | `read` | `path` **or** `items` | One file, or batch 1–100 ranges (`items`); defaults to 128 KiB and returns `next_start_line` when truncated. Images: `attach`. |
-| `run` | `command` | Shell-free argv exec. Foreground default and advertised `timeout_ms` maximum are 300 seconds (`[agent] run_timeout_seconds`, CLI `--run-timeout`; `0` disables the timeout). Smart auto-allows classified in-project `mkdir`/`rmdir`/`rm`/`mv`, bounded `git` inspection (`status`/`diff`/`log`/`show`/`ls-files`/`rev-parse`/`rev-list`/`remote -v`, including copied `git -c pager` prefixes), workspace `python`/`node`/`pytest` forms, `node --test`, and everyday C/C++/Java/C# toolchains (`make`/`g++`/`javac`/`dotnet`); asks for non-empty `rm -r`. |
+| `run` | `command` | Shell-free argv exec. Foreground default and advertised `timeout_ms` maximum are 300 seconds (`[agent] run_timeout_seconds`, CLI `--run-timeout`; `0` disables the timeout). Smart allows validated project commands by default, including Git inspection/staging/ordinary commits/fetch and unfamiliar tools/options; explicit risks and external filesystem access ask. |
 | `fetch` | `url` | HTTP(S) → Markdown/text. Network sessions only. |
 | `web_search` | `term` | At most 3 search hits. Network sessions only. |
 | `ask` | `questions` | Pause an interactive Agent turn for 1–6 required single-choice questions. Hidden from headless and non-agent surfaces. |
@@ -54,7 +54,7 @@ edit. Results stay in the model's call order.
 
 ## Smart `run` filesystem commands
 
-Classified by `assess_workspace_fs_command`:
+Smart permits validated in-project filesystem commands without a command/option allowlist:
 
 - Auto-allow in-project: `mkdir`/`mkdir -p`, `rmdir`, `rm` (files), `mv`, and `rm -r` of an **empty** directory.
 - Ask once: `rm -r` / `rm -rf` when any operand is a **non-empty** directory.
@@ -62,10 +62,11 @@ Classified by `assess_workspace_fs_command`:
 - Headless Ask → Deny (non-empty tree delete stays blocked in `ainiux run`).
 - Windows `cmd` is still denied. POSIX `rmdir` is not treated as Windows `rd`.
 
-## Smart `run` git inspection and workspace interpreters
+## Smart `run` Git and project commands
 
-- Auto-allow bounded in-project Git inspection: `status`, `diff`, `log`, `show`, `blame`, `ls-files`, `rev-parse`, `rev-list`, `remote -v`/`get-url`, `check-ignore`, listing `branch`/`tag`, `stash list`/`show`, and similar read-only queries. `git -c core.pager=cat …` copied from a prior hardened argv still classifies as the porcelain subcommand. Pathspecs are queries: they may name ignored dirs, `.git`, `.ainiux-pr`, missing files, and in-tree `..`. `git -C` is a real directory and cannot enter `.ainiux-pr`. Direct `ls`/`cat` of `.ainiux-pr` stay denied. Reject `--output`/`--ext-diff`/`--textconv`, `git add`/`commit`/`push`, `git stash` without `list`/`show`, and `git -c alias.*`.
-- Auto-allow workspace-scoped interpreters classified by `assess_workspace_interpreter_command`: `python`/`python3` file, `-m`, and `-c`; `node` file, `--test`, and `-e`/`--eval`; `pytest`. Cwd and recognized path operands must stay in-project. `.venv/bin/python` (a symlink to the same PATH interpreter) is a valid workspace python and keeps the venv prefix; `.venv` is not a protected metadata directory. Inline `-c`/`-e` payloads with absolute, home, protected, or `..` path literals stay prompts, as do `python -m http.server`, `node --inspect`/`--watch`/`--loader`, and unknown python/node flags.
-- Auto-allow everyday C/C++/Java/C# toolchains in the same classifier: `gcc`/`g++`/`clang`/`make`/`cmake`/`ninja` (and `cc`/`ar`/`ld`/`clang-format`), `javac`/`java`/`jar`/`mvn`/`gradle`, and `dotnet`/`csc`/`msbuild`. Compiler plugin/wrapper flags, `make --eval`/`-f -`, `make install`, `cmake --install`, `jshell`, Maven `deploy`/`release:perform`, and Gradle remote `publish` stay prompts. `dotnet nuget push|delete` and `dotnet tool install --global` are hard Guard denials. Unknown compiler flags fail open so typical `-O2`/`-Wall`/`-I../include`/`-j` builds do not prompt. `run` does not scan every argv token as a filesystem path.
-- `python -m pip` / `ensurepip` is a hard Guard denial, matching `pip install`. Wrapping `scripts/ainiux` in `python -c` and `python -` stdin programs stay denied. `bash -c` stays denied.
-- Confirm still asks for every `run`. Restricted read-only policy accepts the Git forms and still rejects interpreter and toolchain execution.
+- Project commands run after Guard and path validation. Unknown tools and options alone do not ask. This covers broad Git inspection flags, `git add`, path-only unstaging, ordinary commits, fetch, local branch/tag creation, interpreters, builds and tests.
+- Git push, pull/merge/rebase/cherry-pick/revert, amendment, history resets, branch/tag deletion or replacement, and working-file replacement ask. Global Git prefixes, option assignments and combined short flags retain the same risk checks. Dangerous configuration/path overrides stay denied; pager and external-diff hardening remains.
+- All contained project folders, including `.venv`, `.tools`, caches and `.git`, permit direct Agent access. Only `.ainiux-pr` is protected. Discovery/index ignores do not define permissions. Git queries and search exclusion patterns may mention protected names; real cwd, file inputs, outputs and auxiliary options are validated separately.
+- `.venv/bin/python` may symlink to the same trusted PATH interpreter and retains the venv prefix. Unknown Python/Node flags alone do not ask. Explicit outside/protected inline literals, listeners/debug loaders, compiler plugins/wrappers and install/deploy targets ask. Inline path scanning is not an OS sandbox.
+- Privilege escalation, free-form shells, destructive search execution, `python -m pip`/`ensurepip`, project-helper wrappers in `python -c`, and existing hard Guard denials remain blocked in Confirm/Smart.
+- Confirm asks for executable commands; unchanged `scripts/ainiux/` content trust remains the exception. Script content and external access combine into one approval after path validation. Headless Ask decisions deny. Restricted sessions and security-review retain their independent allowlists.

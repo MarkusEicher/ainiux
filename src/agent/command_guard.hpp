@@ -27,6 +27,10 @@ std::string normalized_command_basename(const std::string& text);
 // Evaluate argv after shell-tokenization (no shell metacharacters expected).
 GuardResult evaluate_command_guard(const std::vector<std::string>& arguments);
 
+// Explicit interpreter/toolchain risks; unknown commands/options are allowed.
+// Implemented beside the shared interpreter classifiers to reuse their parsing.
+GuardResult evaluate_workspace_command_risk(const std::vector<std::string>& arguments);
+
 // Map Ask → Deny for headless one-shot agent (no approval UI).
 GuardResult finalize_guard_for_headless(GuardResult result);
 

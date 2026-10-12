@@ -104,8 +104,8 @@ void test_guard_patterns() {
           "dotnet build allowed by guard");
     check(agent::evaluate_command_guard(
               {"dotnet", "tool", "install", "foo"}).decision ==
-              agent::GuardDecision::Allow,
-          "local dotnet tool install is not a hard Guard deny");
+              agent::GuardDecision::Ask,
+          "local dotnet tool install asks instead of hard denying");
 
     const agent::GuardResult allow =
         agent::evaluate_command_guard({"python3", "hello.py"});
@@ -934,8 +934,74 @@ void test_nested_ainiux_environment_forwards_keys() {
           "nested ainiux (this process) inherits OPENAI_API_KEY for image/CLI");
 }
 
+void test_default_allow_risks_and_command_scope() {
+    const std::vector<std::vector<std::string>> ordinary = {
+        {"git", "ls-files", "--directory", "-o", "--exclude-standard"},
+        {"git", "ls-files", "-s", "--format=%(path)"},
+        {"git", "add", "-A"}, {"git", "commit", "-am", "ordinary"},
+        {"git", "commit", "-m", "--amend"}, {"git", "fetch", "--all"},
+        {"git", "reset", "--", "src/file.cpp"},
+        {"git", "restore", "--staged", "src/file.cpp"},
+        {"git", "branch", "feature"}, {"git", "tag", "-amforce", "v1"},
+        {"git", "switch", "-cfeature"}, {"git", "clean", "-ndx"},
+        {"git", "ls-files", "--", "-f"},
+        {"cargo", "test"}, {"unknown-project-tool", "--future-option"},
+        {"python3", "--future-option", "src/test.py"},
+        {"python3", "-c", "skip={'.git','.venv','.tools'}; print(skip)"},
+        {"find", ".", "-not", "-path", "*/.ainiux-pr/*", "-printf", "%s %p\n"}
+    };
+    for (const auto& args : ordinary)
+        check(agent::evaluate_command_guard(args).decision == agent::GuardDecision::Allow,
+              "default-allow ordinary command: " + agent::format_command_preview(args));
+    const std::vector<std::vector<std::string>> risky = {
+        {"git", "push"}, {"git", "push", "--force-with-lease=main"},
+        {"git", "pull"}, {"git", "merge", "feature"}, {"git", "rebase", "main"},
+        {"git", "cherry-pick", "HEAD~1"}, {"git", "revert", "HEAD"},
+        {"git", "commit", "-m", "ordinary", "--amend"},
+        {"git", "reset", "--hard", "--", "file"}, {"git", "reset", "--soft", "HEAD~1"},
+        {"git", "clean", "-xdf"}, {"git", "branch", "-vD", "feature"},
+        {"git", "tag", "--delete=v1"}, {"git", "tag", "-af", "v1"},
+        {"git", "restore", "--staged", "--worktree", "file"},
+        {"git", "checkout", "--", "file"}, {"git", "switch", "-fc", "feature"},
+        {"git", "-c", "core.pager=cat", "-C", "src", "reset", "--hard"},
+        {"python3", "-m", "http.server"}, {"node", "--inspect=127.0.0.1:9229", "src/a.js"},
+        {"g++", "-fplugin=plugin.so", "src/a.cpp"}, {"make", "install"},
+        {"cmake", "--install", "build"}, {"mvn", "deploy"}, {"gradle", "publish"},
+        {"python3", "-c", "open('/etc/passwd').read()"},
+        {"date", "--set=tomorrow"}, {"ip", "link", "set", "eth0", "down"},
+        {"node", "-prequire('fs').readFileSync('/etc/passwd')"},
+        {"find", "-L", "."}, {"rg", "--follow", "needle", "src"}
+    };
+    for (const auto& args : risky)
+        check(agent::evaluate_command_guard(args).decision == agent::GuardDecision::Ask,
+              "identified risk asks: " + agent::format_command_preview(args));
+    const auto find = agent::assess_agent_command_paths(
+        {"find", ".", "-not", "-path", "*/.git/*", "-not", "-path", "*/.ainiux-pr/*",
+         "-printf", "%s %p\n"});
+    check(find.paths == std::vector<std::string>{"."}, "find patterns and formats are data");
+    const auto git = agent::assess_agent_command_paths(
+        {"git", "-C", "src", "-C", "nested", "diff", "--output=out.txt", "--", ".ainiux-pr"});
+    check(git.chdir_paths == std::vector<std::string>({"src", "nested"}) &&
+              git.paths == std::vector<std::string>{"out.txt"} &&
+              git.query_pathspecs == std::vector<std::string>{".ainiux-pr"},
+          "Git separates sequential cwd, output files and query pathspecs");
+    const auto compiler = agent::assess_agent_command_paths(
+        {"g++", "-I/opt/include", "-o", "/tmp/output", "src/a.cpp"});
+    check(compiler.paths == std::vector<std::string>({"/opt/include", "/tmp/output", "src/a.cpp"}),
+          "compiler attached and separate file options are scoped");
+    const auto response = agent::assess_agent_command_paths(
+        {"g++", "@/tmp/response", "-DROOT=/example", "-ffile-prefix-map=/home/user=.", "src/a.cpp"});
+    check(response.paths == std::vector<std::string>({"/tmp/response", "src/a.cpp"}),
+          "response files are inputs; macro and debug-prefix values are data");
+    const auto search = agent::assess_agent_command_paths(
+        {"rg", "--glob", "*/.ainiux-pr/*", "--ignore-file=/tmp/ignore", "a/b", "src"});
+    check(search.paths == std::vector<std::string>({"/tmp/ignore", "src"}),
+          "search separates patterns from auxiliary files");
+}
+
 void run_all() {
     test_guard_patterns();
+    test_default_allow_risks_and_command_scope();
 #if defined(_WIN32)
     test_windows_direct_argv_paths();
 #endif

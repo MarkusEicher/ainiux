@@ -22,6 +22,7 @@
 #include <utility>
 
 #include "agent/apply_patch.hpp"
+#include "agent/command_guard.hpp"
 #include "agent/history_backup.hpp"
 #include "agent/process.hpp"
 #include "agent/project_paths.hpp"
@@ -280,7 +281,7 @@ bool is_forbidden_path_component(const std::string& value) {
     if (value == "..") return true;
     if (value == "~" || (!value.empty() && value[0] == '~')) return true;  // ~ or ~user
     if (!value.empty() && value[0] == '$') return true;  // $HOME-style injection
-    if (is_protected_state_dir_name(value)) return true;
+    if (is_project_state_dir_name(value)) return true;
     return false;
 }
 
@@ -333,7 +334,7 @@ std::string unsafe_path_message(const std::string& path, const char* action = "m
             return std::string("Forbidden to ") + action +
                    " files via environment-style path components (refused: " + path + ").";
         }
-        if (is_protected_state_dir_name(value)) {
+        if (is_project_state_dir_name(value)) {
             return std::string("Forbidden to ") + action +
                    " protected project metadata (" + value + " in " + path + ").";
         }
@@ -438,9 +439,12 @@ bool resolved_path_is_under_system_temp(const fs::path& candidate) {
     return !ec && !temp.empty() && resolved_path_is_under(temp, candidate);
 }
 
-bool contains_protected_metadata_component(const fs::path& path) {
+bool contains_protected_metadata_component(const fs::path& path,
+                                           const fs::path& workspace = {}) {
+    const bool in_project = !workspace.empty() && resolved_path_is_under(workspace, path);
     for (const fs::path& component : path) {
-        if (is_protected_state_dir_name(component.u8string())) return true;
+        if (in_project ? is_project_state_dir_name(component.u8string())
+                       : is_protected_state_dir_name(component.u8string())) return true;
     }
     return false;
 }
@@ -506,7 +510,7 @@ Error resolve_native_path(const fs::path& workspace,
         return {ErrorCode::FileRead,
                 "could not resolve native path " + requested + ": " + ec.message()};
     external = !resolved_path_is_under(root, resolved);
-    if (contains_protected_metadata_component(resolved))
+    if (contains_protected_metadata_component(resolved, root))
         return {ErrorCode::BadArgs,
                 "refusing access to protected agent metadata: " +
                     resolved.generic_u8string()};
@@ -1018,7 +1022,7 @@ bool visible_workspace_path(const index::Snapshot& snapshot,
 }
 
 bool is_protected_listing_name(const std::string& name) {
-    return is_protected_state_dir_name(name);
+    return is_project_state_dir_name(name);
 }
 
 bool path_allowed_for_command(const index::Snapshot& snapshot,
@@ -1136,7 +1140,8 @@ bool recursive_rm_targets_nonempty_directory(const index::Snapshot& snapshot,
 Error validate_vetted_read_only_paths(const index::Snapshot& snapshot,
                                       const ReadOnlyCommandAssessment& assessment,
                                       const std::string& cwd,
-                                      bool& outside_project) {
+                                      bool& outside_project,
+                                      bool allow_missing = false) {
     outside_project = false;
     std::error_code ec;
     const fs::path root = fs::canonical(snapshot.workspace, ec);
@@ -1146,11 +1151,11 @@ Error validate_vetted_read_only_paths(const index::Snapshot& snapshot,
     const fs::path requested_cwd =
         cwd.empty() ? root
                     : (fs::u8path(cwd).is_absolute() ? fs::u8path(cwd) : root / fs::u8path(cwd));
-    const fs::path canonical_cwd = fs::canonical(requested_cwd, ec);
+    fs::path canonical_cwd = fs::canonical(requested_cwd, ec);
     if (ec || !fs::is_directory(canonical_cwd, ec) ||
         contains_symlink_component(fs::absolute(requested_cwd).lexically_normal()) ||
-        contains_protected_metadata_component(requested_cwd.lexically_normal()) ||
-        contains_protected_metadata_component(canonical_cwd))
+        contains_protected_metadata_component(requested_cwd.lexically_normal(), root) ||
+        contains_protected_metadata_component(canonical_cwd, root))
         return {ErrorCode::BadArgs,
                 "vetted read-only command cwd must be an existing safe directory"};
     if (!resolved_path_is_under(root, canonical_cwd)) outside_project = true;
@@ -1160,12 +1165,18 @@ Error validate_vetted_read_only_paths(const index::Snapshot& snapshot,
         const fs::path supplied = fs::u8path(operand);
         const fs::path requested =
             supplied.is_absolute() ? supplied : canonical_cwd / supplied;
-        if (contains_protected_metadata_component(requested.lexically_normal()))
+        if (path_has_home_or_env_prefix(operand) ||
+            (!supplied.is_absolute() && !outside_project &&
+             !resolved_path_is_under(root, requested.lexically_normal())))
+            return {ErrorCode::BadArgs, "command path escapes the project: " + operand};
+        if (contains_protected_metadata_component(requested.lexically_normal(), root))
             return {ErrorCode::BadArgs,
                     "vetted read-only command refused protected metadata path: " +
                         operand};
         const fs::file_status literal_status = fs::symlink_status(requested, ec);
-        if (ec || literal_status.type() == fs::file_type::not_found)
+        if ((ec || literal_status.type() == fs::file_type::not_found) &&
+            (!allow_missing || as_directory ||
+             (ec && ec != std::errc::no_such_file_or_directory)))
             return {ErrorCode::BadArgs,
                     as_directory ? ("git -C requires an existing directory: " + operand)
                                  : ("vetted read-only command path does not exist: " +
@@ -1177,9 +1188,12 @@ Error validate_vetted_read_only_paths(const index::Snapshot& snapshot,
             return {ErrorCode::BadArgs,
                     "vetted read-only command refused symlink path component: " +
                         operand};
-        const fs::path canonical = fs::canonical(requested, ec);
+        ec.clear();
+        const fs::path canonical = allow_missing && !as_directory
+                                     ? fs::weakly_canonical(requested, ec)
+                                     : fs::canonical(requested, ec);
         if (ec || canonical.empty() ||
-            contains_protected_metadata_component(canonical))
+            contains_protected_metadata_component(canonical, root))
             return {ErrorCode::BadArgs,
                     "could not safely resolve vetted read-only command path: " +
                         operand};
@@ -1193,6 +1207,10 @@ Error validate_vetted_read_only_paths(const index::Snapshot& snapshot,
     for (const std::string& operand : assessment.chdir_operands) {
         const Error chdir_error = validate_existing(operand, true);
         if (!chdir_error.ok()) return chdir_error;
+        // git -C is sequential: later relative -C and file paths use this cwd.
+        const fs::path supplied = fs::u8path(operand);
+        canonical_cwd = fs::canonical(supplied.is_absolute() ? supplied
+                                                            : canonical_cwd / supplied, ec);
     }
 
     if (assessment.git_query_pathspecs) {
@@ -1565,8 +1583,7 @@ GuardApprovalDecision ReadToolRegistry::request_permission(
     if (permission_mode_ == PermissionMode::Confirm)
         ask = write || outside_project || destructive || tool_name == "run";
     else if (permission_mode_ == PermissionMode::Smart)
-        ask = destructive || tool_name == "run" ||
-              (outside_project && !under_system_temp);
+        ask = destructive || (outside_project && (tool_name == "run" || !under_system_temp));
     if (!ask) return GuardApprovalDecision::Allow;
 
     GuardApprovalRequest request;
@@ -1575,12 +1592,13 @@ GuardApprovalDecision ReadToolRegistry::request_permission(
     request.rule_id =
         !specific_rule.empty()
             ? specific_rule
-            : (tool_name == "run"
+            : (outside_project ? "ask_on_external_native_access" : tool_name == "run"
                    ? "ask_on_model_command"
-                   : (outside_project ? "ask_on_external_native_access"
-                                      : "ask_on_confirm_mode_write"));
+                   : "ask_on_confirm_mode_write");
     if (!specific_message.empty()) {
         request.message = specific_message;
+    } else if (tool_name == "run" && outside_project) {
+        request.message = "Run this command with filesystem access outside the active project?";
     } else if (tool_name == "run") {
         request.message =
             "Run this model-issued command? Commands always require approval in " +
@@ -5160,6 +5178,7 @@ std::string ReadToolRegistry::execute(const std::string& requested_name,
         bool project_script_trusted = false;
         bool project_script_reused = false;
         std::string project_script_hash;
+        std::size_t project_script_size = 0;
         if (project_script) {
             if (!full)
                 return tool_error_result(
@@ -5183,6 +5202,7 @@ std::string ReadToolRegistry::execute(const std::string& requested_name,
             if (!error.ok())
                 return tool_error_result(error_code_string(error.code), error.message);
             project_script_hash = security::sha256_hex(script_bytes);
+            project_script_size = script_bytes.size();
             if (permission_mode_ == PermissionMode::Confirm &&
                 session_store_ != nullptr && session_store_->is_open()) {
                 error = session_store_->script_is_trusted(
@@ -5193,16 +5213,76 @@ std::string ReadToolRegistry::execute(const std::string& requested_name,
                                              error.message);
                 project_script_reused = project_script_trusted;
             }
+        }
+        // Security-review keeps path scope to the completed index. Agent mode allows
+        // real workspace paths (empty dirs, #files#, scripts to execute).
+        const bool index_only_commands =
+            mutation_policy_ == MutationPolicy::Disabled;
+        bool uses_external = false;
+        const ReadOnlyCommandAssessment read_only =
+            assess_read_only_command(parsed_arguments);
+        const CommandPathAssessment command_paths = assess_agent_command_paths(parsed_arguments);
+        if (full) {
+            ReadOnlyCommandAssessment scope;
+            scope.path_operands = command_paths.paths;
+            scope.chdir_operands = command_paths.chdir_paths;
+            policy_error = validate_vetted_read_only_paths(snapshot_, scope, cwd, uses_external, true);
+            if (policy_error.ok() && !command_paths.query_pathspecs.empty()) {
+                scope.path_operands = command_paths.query_pathspecs;
+                scope.git_query_pathspecs = true;
+                bool query_external = false;
+                policy_error = validate_vetted_read_only_paths(snapshot_, scope, cwd, query_external, true);
+                uses_external = uses_external || query_external;
+            }
+        } else {
+            policy_error = validate_command_workspace_paths(
+                snapshot_, parsed_arguments, cwd, index_only_commands, agent_session,
+                uses_external, read_only.git_query_pathspecs);
+        }
+        if (!policy_error.ok()) return tool_error_result("policy_denied", policy_error.message);
+        if (!full && agent_session && uses_external)
+            return tool_error_result(
+                "policy_denied",
+                "restricted run_command paths and cwd must remain inside the project");
+        bool read_only_uses_external = false;
+        if (!full && read_only.vetted) {
+            policy_error = validate_vetted_read_only_paths(
+                snapshot_, read_only, cwd, read_only_uses_external);
+            if (!policy_error.ok())
+                return tool_error_result("policy_denied", policy_error.message);
+            uses_external = uses_external || read_only_uses_external;
+        }
+        // Recursive-delete risk must not disappear because rm gains another flag.
+        bool recursive_rm = false;
+        if (!parsed_arguments.empty() && normalized_command_basename(parsed_arguments[0]) == "rm") {
+            for (std::size_t i = 1; i < parsed_arguments.size(); ++i) {
+                const std::string& arg = parsed_arguments[i];
+                if (arg == "--") break;
+                if (arg == "--recursive" || (arg.size() > 1 && arg[0] == '-' && arg[1] != '-' &&
+                    (arg.find('r', 1) != std::string::npos || arg.find('R', 1) != std::string::npos)))
+                    recursive_rm = true;
+            }
+        }
+        const bool nonempty_tree =
+            recursive_rm &&
+            recursive_rm_targets_nonempty_directory(snapshot_, cwd,
+                                                    command_paths.paths);
+        // Consolidate script trust and command scope/risk in a single approval,
+        // only after every path has been validated.
+        if (project_script) {
             GuardApprovalDecision decision = GuardApprovalDecision::Allow;
             // Smart/Yolo treat scripts/ainiux as project helpers. Confirm asks
             // once per path+hash, then reuses until the file changes.
-            const bool must_ask = permission_mode_ == PermissionMode::Confirm &&
-                                  !project_script_trusted;
+            const bool must_ask =
+                (permission_mode_ == PermissionMode::Confirm && !project_script_trusted) ||
+                (permission_mode_ != PermissionMode::Yolo &&
+                 (uses_external || !guard_rule_id.empty()));
             if (must_ask) {
                 GuardApprovalRequest ask;
                 ask.tool_name = "run";
                 ask.command_preview = format_command_preview(parsed_arguments);
-                ask.rule_id = "ask_on_project_script_content";
+                ask.rule_id = !guard_rule_id.empty() ? guard_rule_id : uses_external
+                    ? "ask_on_external_native_access" : "ask_on_project_script_content";
                 std::ostringstream message;
                 const std::size_t script_arg0 =
                     project_script_interpreter.empty() ? 1 : 2;
@@ -5210,19 +5290,25 @@ std::string ReadToolRegistry::execute(const std::string& requested_name,
                     parsed_arguments.begin() +
                         std::min(script_arg0, parsed_arguments.size()),
                     parsed_arguments.end());
+                if (uses_external)
+                    message << "Includes filesystem access outside the project.\n";
+                if (!guard_rule_id.empty())
+                    message << evaluate_command_guard(parsed_arguments).message << "\n";
                 message << "Execute this project script?\n"
                         << "Path: " << project_script_relative << "\n";
                 if (!project_script_interpreter.empty())
                     message << "Interpreter: " << project_script_interpreter << "\n";
                 message << "Arguments: "
                         << format_command_preview(script_arguments) << "\n"
-                        << "Size: " << script_bytes.size() << " bytes\n"
+                        << "Size: " << project_script_size << " bytes\n"
                         << "Hash: "
                         << (project_script_hash.size() > 16
                                 ? project_script_hash.substr(0, 16) + "…"
                                 : project_script_hash)
                         << "\n"
-                        << "Remembered in this project until the file changes.\n"
+                        << (permission_mode_ == PermissionMode::Confirm
+                                ? "Remembered in this project until the file changes; external access is one-shot.\n"
+                                : "Approval covers this invocation only.\n")
                         << "Press Review to open the script in dired.";
                 ask.message = message.str();
                 ask.arguments = parsed_arguments;
@@ -5257,62 +5343,13 @@ std::string ReadToolRegistry::execute(const std::string& requested_name,
                 trust.script_name = project_script_relative;
                 trust.interpreter = project_script_interpreter;
                 trust.content_hash = project_script_hash;
-                error = session_store_->record_script_trust(trust);
-                if (!error.ok())
-                    return tool_error_result(error_code_string(error.code),
-                                             error.message);
+                const Error trust_error = session_store_->record_script_trust(trust);
+                if (!trust_error.ok())
+                    return tool_error_result(error_code_string(trust_error.code),
+                                             trust_error.message);
                 project_script_trusted = true;
             }
         }
-        // Security-review keeps path scope to the completed index. Agent mode allows
-        // real workspace paths (empty dirs, #files#, scripts to execute).
-        const bool index_only_commands =
-            mutation_policy_ == MutationPolicy::Disabled;
-        bool uses_external = false;
-        const ReadOnlyCommandAssessment read_only =
-            assess_read_only_command(parsed_arguments);
-        policy_error = validate_command_workspace_paths(
-            snapshot_, parsed_arguments, cwd, index_only_commands, agent_session,
-            uses_external, read_only.git_query_pathspecs);
-        if (!policy_error.ok()) return tool_error_result("policy_denied", policy_error.message);
-        if (!full && agent_session && uses_external)
-            return tool_error_result(
-                "policy_denied",
-                "restricted run_command paths and cwd must remain inside the project");
-        bool read_only_uses_external = false;
-        if (read_only.vetted) {
-            policy_error = validate_vetted_read_only_paths(
-                snapshot_, read_only, cwd, read_only_uses_external);
-            if (!policy_error.ok())
-                return tool_error_result("policy_denied", policy_error.message);
-            uses_external = uses_external || read_only_uses_external;
-        }
-        const ReadOnlyCommandAssessment interpreter =
-            assess_workspace_interpreter_command(parsed_arguments);
-        if (interpreter.vetted) {
-            bool interpreter_uses_external = false;
-            policy_error = validate_vetted_read_only_paths(
-                snapshot_, interpreter, cwd, interpreter_uses_external);
-            if (!policy_error.ok())
-                return tool_error_result("policy_denied", policy_error.message);
-            uses_external = uses_external || interpreter_uses_external;
-        }
-        const WorkspaceFsCommandAssessment fs_cmd =
-            assess_workspace_fs_command(parsed_arguments);
-        const bool nonempty_tree =
-            fs_cmd.classified && fs_cmd.recursive_rm &&
-            recursive_rm_targets_nonempty_directory(snapshot_, cwd,
-                                                    fs_cmd.path_operands);
-        const bool smart_read_only_exemption =
-            permission_controls_ && permission_mode_ == PermissionMode::Smart &&
-            read_only.vetted && !uses_external && guard_rule_id.empty();
-        const bool smart_interpreter_exemption =
-            permission_controls_ && permission_mode_ == PermissionMode::Smart &&
-            interpreter.vetted && !uses_external && guard_rule_id.empty();
-        const bool smart_fs_exemption =
-            permission_controls_ && permission_mode_ == PermissionMode::Smart &&
-            fs_cmd.classified && !uses_external && !nonempty_tree &&
-            guard_rule_id.empty();
         GuardApprovalDecision permission = GuardApprovalDecision::Allow;
         if (nonempty_tree && permission_mode_ != PermissionMode::Yolo) {
             GuardApprovalRequest ask;
@@ -5320,11 +5357,11 @@ std::string ReadToolRegistry::execute(const std::string& requested_name,
             ask.command_preview = format_command_preview(parsed_arguments);
             ask.rule_id = "ask_on_recursive_delete";
             ask.message =
-                "recursively delete a non-empty directory tree via run rm -r";
+                "recursively delete a non-empty directory tree via run rm -r" +
+                std::string(uses_external ? " including filesystem access outside the project" : "");
             ask.arguments = parsed_arguments;
             permission = request_guard_approval(ask, cancellation);
-        } else if (project_script || smart_read_only_exemption || smart_fs_exemption ||
-                   smart_interpreter_exemption) {
+        } else if (project_script) {
             permission = GuardApprovalDecision::Allow;
         } else {
             permission = request_permission(
@@ -5333,9 +5370,9 @@ std::string ReadToolRegistry::execute(const std::string& requested_name,
                 !guard_rule_id.empty(), guard_rule_id,
                 guard_rule_id.empty()
                     ? std::string()
-                    : "This command also matched Guard rule " +
-                          guard_rule_id +
-                          ". One approval covers the complete validated command call.",
+                    : evaluate_command_guard(parsed_arguments).message +
+                          ". One approval covers the complete validated command call" +
+                          (uses_external ? " including filesystem access outside the project." : "."),
                 cancellation);
         }
         if (permission != GuardApprovalDecision::Allow) {

@@ -237,8 +237,9 @@ void test_file_tools_unicode_and_path_attacks() {
           "deny absolute path");
     check(!json_ok(tools.execute("write", R"({"path":".ainiux-pr/evil.txt","content":"x"})")),
           "deny .ainiux-pr metadata write");
-    check(!json_ok(tools.execute("write", R"({"path":".git/config","content":"x"})")),
-          "deny .git write");
+    fs::create_directories(fs::path(workspace) / ".git");
+    check(json_ok(tools.execute("write", R"({"path":".git/config","content":"x"})")),
+          "project-local .git is an accessible directory");
     check(!json_ok(tools.execute("write", R"({"path":"src/../../outside.txt","content":"x"})")),
           "deny nested .. escape");
     check(!json_ok(tools.execute("rm", R"({"path":"../escape.txt"})")), "remove deny escape");

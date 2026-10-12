@@ -1,6 +1,7 @@
 #include "agent/read_only_command.hpp"
 
 #include "agent/command_guard.hpp"
+#include "agent/project_paths.hpp"
 
 #include <cctype>
 #include <cstddef>
@@ -1313,8 +1314,7 @@ bool is_env_mutation_module(const std::string& module) {
 }
 
 bool is_protected_path_component(const std::string& part) {
-    return part == ".ainiux-pr" || part == ".ainiux" || part == ".git" ||
-           part == ".hg" || part == ".svn" || part == "..";
+    return is_project_state_dir_name(part) || part == "..";
 }
 
 bool quoted_string_escapes_workspace(const std::string& value) {
@@ -1909,6 +1909,284 @@ ReadOnlyCommandAssessment assess_workspace_interpreter_command(
     if (is_gradle_command(command)) return assess_gradle_command(arguments);
     if (is_dotnet_command(command)) return assess_dotnet_command(arguments);
     return reject("not a workspace interpreter command");
+}
+
+GuardResult evaluate_workspace_command_risk(const std::vector<std::string>& args) {
+    if (args.empty()) return {};
+    const std::string command = normalized_command_basename(args[0]);
+    auto risk = [](const std::string& message) {
+        return GuardResult{GuardDecision::Ask, "ask_on_workspace_command_risk", message};
+    };
+    // Toolchain assessors reject explicit plugins, wrappers, installation and
+    // publishing, not unknown flags. Keep those risks without an allowlist gate.
+    ReadOnlyCommandAssessment assessment;
+    bool toolchain = true;
+    if (is_c_compiler_command(command) || is_c_support_command(command) ||
+        is_csc_command(command) || is_msbuild_command(command))
+        assessment = assess_c_compiler(args);
+    else if (is_make_command(command)) assessment = assess_make_command(args);
+    else if (is_cmake_command(command)) assessment = assess_cmake_command(args);
+    else if (is_ninja_command(command)) assessment = assess_ninja_command(args);
+    else if (is_java_launcher_command(command) || is_javac_command(command) ||
+             is_jar_command(command)) assessment = assess_java_command(args);
+    else if (is_maven_command(command)) assessment = assess_maven_command(args);
+    else if (is_gradle_command(command)) assessment = assess_gradle_command(args);
+    else toolchain = false;
+    if (toolchain && !assessment.vetted) return risk(assessment.reason);
+
+    // These commands can display host state as well as change it. Match actual
+    // mutation verbs/options; unfamiliar display options are not an Ask reason.
+    if (command == "date") {
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            if (args[i] == "--") break;
+            if (args[i] == "-s" || args[i] == "--set" || args[i].rfind("--set=", 0) == 0 ||
+                (args[i].rfind("-s", 0) == 0 && args[i].size() > 2))
+                return risk("date sets the host clock");
+        }
+    }
+    if (command == "ip" || command == "ifconfig") {
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            if (args[i] == "add" || args[i] == "del" || args[i] == "delete" ||
+                args[i] == "set" || args[i] == "change" || args[i] == "replace" ||
+                args[i] == "flush" || args[i] == "up" || args[i] == "down")
+                return risk("command changes host network configuration");
+        }
+    }
+    if (command == "umount" || command == "kill" || command == "killall" || command == "pkill" ||
+        (command == "mount" && args.size() > 1 && args[1] != "--help" && args[1] != "--version"))
+        return risk("command changes host mounts or processes");
+    if (command == "dotnet" && args.size() > 2 && args[1] == "tool" &&
+        (args[2] == "install" || args[2] == "update" || args[2] == "uninstall"))
+        return risk("dotnet tool command changes the tool environment");
+    if (command == "find" || command == "rg" || command == "grep" || command == "ls") {
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            if (args[i] == "--") break;
+            if (command == "find" && args[i] != "-H" && args[i] != "-L" && args[i] != "-P")
+                break; // find link-following modes precede the starting paths
+            if (args[i] == "-e" || args[i] == "--regexp" || args[i] == "-f" ||
+                args[i] == "--file" || args[i] == "--glob" || args[i] == "--exclude") {
+                if (i + 1 < args.size()) ++i;
+                continue;
+            }
+            if (args[i] == "--follow" || args[i] == "--dereference" ||
+                args[i] == "-L" || (command == "grep" && args[i] == "-R"))
+                return risk("command follows filesystem links beyond validated operands");
+        }
+    }
+
+    if (is_python_command(command) || is_node_command(command)) {
+        const bool python = is_python_command(command);
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            const std::string& arg = args[i];
+            if (arg == "--") break;
+            if (!python && (arg.rfind("--inspect", 0) == 0 ||
+                            arg.rfind("--watch", 0) == 0 ||
+                            arg == "--loader" || arg.rfind("--loader=", 0) == 0 ||
+                            arg == "--experimental-loader" ||
+                            arg.rfind("--experimental-loader=", 0) == 0))
+                return risk("command enables a listener, watcher or external loader: " + arg);
+            std::string payload;
+            const char* inline_option = python ? "--command" : "--eval";
+            const char* short_option = python ? "-c" : "-e";
+            if (arg == short_option || (!python && arg == "-p") ||
+                arg == inline_option || (!python && arg == "--print")) {
+                if (i + 1 < args.size()) payload = args[++i];
+            } else if ((arg.rfind(std::string(short_option), 0) == 0 ||
+                        (!python && arg.rfind("-p", 0) == 0)) && arg.size() > 2) {
+                payload = arg.substr(2);
+            } else if (arg.rfind(std::string(inline_option) + "=", 0) == 0) {
+                payload = arg.substr(std::char_traits<char>::length(inline_option) + 1);
+            } else if (!python && arg.rfind("--print=", 0) == 0) {
+                payload = arg.substr(8);
+            }
+            if (!payload.empty()) {
+                std::string reason;
+                if (!inline_payload_targets_workspace(payload, reason)) return risk(reason);
+                break; // subsequent arguments are program data
+            }
+            if (python && (arg == "-m" || arg == "--module" ||
+                           arg.rfind("--module=", 0) == 0 ||
+                           (arg.rfind("-m", 0) == 0 && arg.size() > 2))) {
+                std::string module;
+                if (arg == "-m" || arg == "--module") {
+                    if (i + 1 < args.size()) module = args[++i];
+                } else module = arg.substr(arg.rfind("--module=", 0) == 0 ? 9 : 2);
+                if (is_listener_module(module))
+                    return risk("python module starts a network listener: " + module);
+                break;
+            }
+            if (python && (arg == "-W" || arg == "-X")) {
+                if (i + 1 < args.size()) ++i;
+                continue;
+            }
+            if (!arg.empty() && arg[0] != '-') break; // script arguments are data
+        }
+    }
+    if (is_pytest_command(command)) {
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            if (args[i] == "--") break;
+            if (args[i].rfind("--pdb", 0) == 0 || args[i] == "--trace")
+                return risk("pytest debugger requires interaction");
+        }
+    }
+    return {};
+}
+
+CommandPathAssessment assess_agent_command_paths(const std::vector<std::string>& args) {
+    CommandPathAssessment result;
+    if (args.empty()) return result;
+    const std::string command = normalized_command_basename(args[0]);
+    if (command == "echo" || command == "printf") return result;
+    const bool git = command == "git";
+    const ReadOnlyCommandAssessment read_only = assess_read_only_command(args);
+    if (!git && read_only.vetted) {
+        result.paths = read_only.path_operands;
+        return result;
+    }
+    const bool python = is_python_command(command);
+    const bool node = is_node_command(command);
+    const bool compiler = is_c_compiler_command(command) || is_c_support_command(command);
+    const bool search = command == "rg" || command == "grep";
+    const std::size_t sub = git ? git_subcommand_index(args) : 0;
+    const std::string git_command = git && sub < args.size() ? args[sub] : "";
+    const StringSet git_queries = {"status", "diff", "log", "show", "rev-list",
+        "shortlog", "blame", "ls-tree", "ls-files", "check-ignore", "rev-parse"};
+    const bool git_query = git_queries.count(git_command) != 0;
+    bool operands = false;
+    bool search_pattern = false;
+    bool find_expression = false;
+    bool inline_program = false;
+    bool interpreter_program = false;
+    static const StringSet data_options = {"--format", "--pretty", "--color", "--sort",
+        "--time", "--time-style", "--quoting-style", "--block-size", "--width",
+        "--lines", "--bytes", "--max-count", "--max-depth", "--glob", "--iglob",
+        "--regexp", "--exclude", "--include", "--exclude-dir", "--message",
+        "--author", "--grep", "--since", "--until", "--date", "--encoding",
+        "--input-type", "--title", "--check-hash-based-pycs"};
+    auto value = [&](std::size_t& i, const std::string& arg,
+                     const std::string& option) -> std::string {
+        if (arg.size() > option.size() && arg.compare(0, option.size(), option) == 0 &&
+            arg[option.size()] == '=') return arg.substr(option.size() + 1);
+        if (arg == option && i + 1 < args.size()) return args[++i];
+        if (option.size() == 2 && option[0] == '-' && arg.size() > 2)
+            return arg.substr(2);
+        return {};
+    };
+    for (std::size_t i = 1; i < args.size(); ++i) {
+        const std::string& arg = args[i];
+        if ((compiler || is_csc_command(command) || is_msbuild_command(command) ||
+             is_java_launcher_command(command) || is_javac_command(command)) &&
+            arg.size() > 1 && arg[0] == '@') {
+            result.paths.push_back(arg.substr(1));
+            continue;
+        }
+        if (git && i == sub) continue;
+        if (!operands && arg == "--") { operands = true; continue; }
+        if (git && i < sub) {
+            if (arg == "-C" || (arg.rfind("-C", 0) == 0 && arg.size() > 2))
+                result.chdir_paths.push_back(value(i, arg, "-C"));
+            else if (arg == "-c") { if (i + 1 < args.size()) ++i; }
+            continue;
+        }
+        if (command == "find") {
+            if (!find_expression && (arg == "-H" || arg == "-P" || arg == "-L")) continue;
+            if (!arg.empty() && (arg[0] == '-' || arg == "!" || arg == "("))
+                find_expression = true;
+            if (!find_expression) { result.paths.push_back(arg); continue; }
+            if (arg == "-newer" || arg == "-anewer" || arg == "-cnewer" ||
+                arg == "-fprint" || arg == "-fprint0" || arg == "-fprintf" || arg == "-fls")
+                result.paths.push_back(value(i, arg, arg));
+            continue;
+        }
+        if (!operands && !arg.empty() && arg[0] == '-') {
+            const std::string option = arg.substr(0, arg.find('='));
+            if ((python && !interpreter_program &&
+                 (option == "-c" || option == "--command" ||
+                  (arg.rfind("-c", 0) == 0 && arg.size() > 2))) ||
+                (node && !interpreter_program &&
+                 (option == "-e" || option == "-p" || option == "--eval" ||
+                  option == "--print" || ((arg.rfind("-e", 0) == 0 || arg.rfind("-p", 0) == 0) &&
+                                         arg.size() > 2)))) {
+                if (arg == option && (arg.size() == 2 || arg.rfind("--", 0) == 0))
+                    if (i + 1 < args.size()) ++i;
+                inline_program = true;
+                interpreter_program = true;
+                continue;
+            }
+            if (python && !interpreter_program &&
+                (option == "-m" || option == "--module" ||
+                 (arg.rfind("-m", 0) == 0 && arg.size() > 2))) {
+                if (arg == "-m" || arg == "--module") if (i + 1 < args.size()) ++i;
+                interpreter_program = true;
+                continue;
+            }
+            const bool file_option = option == "--output" || option == "--output-file" ||
+                option == "--exclude-from" || option == "--ignore-file" ||
+                option == "--pathspec-from-file" || option == "--from-file" ||
+                option == "--to-file" || option == "--file" ||
+                option == "--makefile" || option == "--directory" ||
+                option == "--require" || option == "--import" ||
+                (git && git_command == "commit" && (option == "-F" || option == "-t" ||
+                                                       option == "--template")) ||
+                (search && option == "-f") ||
+                (is_make_command(command) && (option == "-f" || option == "-C")) ||
+                (node && option == "-r") ||
+                (compiler && (arg.rfind("-o", 0) == 0 || arg.rfind("-I", 0) == 0 ||
+                              arg.rfind("-L", 0) == 0 || option == "-include" ||
+                              option == "-imacros" || option == "-isystem" ||
+                              option == "-iquote"));
+            const bool attached_file = (git && git_command == "commit" &&
+                arg.size() > 2 && (arg.rfind("-F", 0) == 0 || arg.rfind("-t", 0) == 0)) ||
+                (search && arg.size() > 2 && arg.rfind("-f", 0) == 0) ||
+                (is_make_command(command) && arg.size() > 2 &&
+                 (arg.rfind("-f", 0) == 0 || arg.rfind("-C", 0) == 0));
+            if ((file_option || attached_file) && !(git && option == "--directory")) {
+                std::string name = option;
+                if (attached_file) name = arg.substr(0, 2);
+                if (compiler && arg.size() > 2 && arg[1] != '-' &&
+                    (arg[1] == 'o' || arg[1] == 'I' || arg[1] == 'L')) name = arg.substr(0, 2);
+                result.paths.push_back(value(i, arg, name));
+                continue;
+            }
+            // Known non-file option values are data, even when they contain '/'.
+            if (data_options.count(option) || (git && option == "-m") ||
+                (python && (option == "-W" || option == "-X")) ||
+                (search && (option == "-e" || option == "-g" || option == "-t")) ||
+                ((command == "head" || command == "tail") && (option == "-n" || option == "-c"))) {
+                if (search && option == "-e") search_pattern = true;
+                if (arg == option && i + 1 < args.size()) ++i;
+                continue;
+            }
+            if (compiler && (arg.rfind("-D", 0) == 0 || arg.rfind("-U", 0) == 0 ||
+                arg.rfind("-ffile-prefix-map=", 0) == 0 ||
+                arg.rfind("-fdebug-prefix-map=", 0) == 0 || arg.rfind("-fmacro-prefix-map=", 0) == 0)) {
+                if ((arg == "-D" || arg == "-U") && i + 1 < args.size()) ++i;
+                continue;
+            }
+            // Path-looking assignment values must still be scoped for unknown tools.
+            const std::size_t equal = arg.find('=');
+            if (equal != std::string::npos) {
+                const std::string assigned = arg.substr(equal + 1);
+                if (!assigned.empty() && (assigned[0] == '/' || assigned[0] == '~' ||
+                    assigned[0] == '$' || assigned.rfind("../", 0) == 0))
+                    result.paths.push_back(assigned);
+            }
+            continue;
+        }
+        if (search && !search_pattern) { search_pattern = true; continue; }
+        if ((python || node) && inline_program) continue;
+        if (git_query) result.query_pathspecs.push_back(arg);
+        else if (git && (git_command == "branch" ||
+                        git_command == "tag" || git_command == "fetch" ||
+                        git_command == "push" || git_command == "remote" ||
+                        git_command == "switch" || git_command == "checkout" ||
+                        git_command == "reset")) {
+            // Ref names and URLs are data; explicit local paths still need scope.
+            if (operands || (!arg.empty() && (arg[0] == '/' || arg.rfind("./", 0) == 0 ||
+                                              arg.rfind("../", 0) == 0))) result.paths.push_back(arg);
+        } else result.paths.push_back(arg);
+    }
+    return result;
 }
 
 }  // namespace ainiux::agent

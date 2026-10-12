@@ -6,7 +6,7 @@
 namespace ainiux::agent {
 
 // A conservative, complete-argv assessment used by restricted command policy and by
-// Smart-mode approval. `path_operands` contains every filename/directory input
+// path validation. `path_operands` contains every filename/directory input
 // recognized by the accepted invocation, including auxiliary input files.
 // Unknown commands, options, or invocation shapes are not vetted.
 struct ReadOnlyCommandAssessment {
@@ -25,6 +25,18 @@ struct ReadOnlyCommandAssessment {
 ReadOnlyCommandAssessment assess_read_only_command(
     const std::vector<std::string>& arguments);
 
+// Agent command scope is independent of restricted/read-only allowlists. Unknown
+// options do not reject a command. Known file-valued options are collected, while
+// patterns, formats, messages, inline programs and Git revisions remain data.
+struct CommandPathAssessment {
+    std::vector<std::string> paths;
+    std::vector<std::string> chdir_paths;
+    std::vector<std::string> query_pathspecs;
+};
+
+CommandPathAssessment assess_agent_command_paths(
+    const std::vector<std::string>& arguments);
+
 // Index of the git porcelain subcommand after git(1) global options such as
 // `-c name=value`, `-C path`, and pager flags. Returns arguments.size() when
 // no subcommand is present. Shared by Smart classification, pager hardening,
@@ -36,25 +48,25 @@ std::size_t git_subcommand_index(const std::vector<std::string>& arguments);
 // those overrides.
 bool git_config_assignment_is_dangerous(const std::string& assignment);
 
-// Smart-mode auto-allow for `node --test` [paths]. Executes project tests, so it
+// Conservative `node --test` [paths] assessment. Executes project tests, so it
 // is not part of RestrictedReadOnly. Broader node file/`-e` forms use
 // assess_workspace_interpreter_command.
 ReadOnlyCommandAssessment assess_node_test_command(
     const std::vector<std::string>& arguments);
 
-// Smart-mode auto-allow for workspace-scoped interpreters and everyday
+// Conservative assessment for workspace-scoped interpreters and everyday
 // C/C++/Java/C# toolchains: python file / -m / -c, node file / --test / -e,
 // pytest, gcc/g++/clang/make/cmake/ninja, javac/java/jar/mvn/gradle, and
 // dotnet/csc/msbuild. Not part of RestrictedReadOnly. Unknown python/node
 // flags, listeners, inspect/watch/loaders, compiler plugins, install/publish
 // targets, and inline payloads with out-of-workspace path literals stay
-// unvetted (Smart still asks).
+// unvetted. Smart uses explicit Guard risk rules, not this allowlist.
 ReadOnlyCommandAssessment assess_workspace_interpreter_command(
     const std::vector<std::string>& arguments);
 
-// Conservative argv classifier for in-project mkdir/rmdir/rm/mv. Used by Smart
-// so those run invocations do not prompt unless rm -r targets a non-empty tree.
-// Unknown flags or shapes are not classified (Smart still asks).
+// Conservative argv classifier for in-project mkdir/rmdir/rm/mv. Unknown flags
+// or shapes are not classified. Smart uses independent path/risk checks; a failed
+// classification is never itself a reason to request approval.
 struct WorkspaceFsCommandAssessment {
     bool classified = false;
     bool recursive_rm = false;

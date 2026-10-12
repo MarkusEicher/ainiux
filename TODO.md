@@ -19,7 +19,7 @@
 - Continue agent cleanup: load the agent transcript as the sole TUI source of truth, reduce chat-session coupling, strengthen editor↔agent handoff, and retain security-review as strictly read-only.
 - In-turn Agent tool parallelism is implemented (`agent.max_parallel_agents`, default 4, hard cap 32) for consecutive independent reads/search/fetch and consecutive `run` calls. Keep measuring whether a higher default helps; mutations, index/snapshot tools, and MCP stay exclusive.
 - Add a future Agent-specific custom-command and skill system only after its own design; do not reuse `editor-commands.conf`, whose commands remain Chat/editor-only.
-- Reusable agent helpers live under `scripts/ainiux/`. `.ainiux-pr/scripts/` is gone. Smart auto-allows workspace `python3 -c`/`-m`, `node` file/`-e`, and everyday C/C++/Java/C# toolchain forms; wrapping `scripts/ainiux` in `python3 -c` stays denied. OS-level command sandbox remains later.
+- Reusable agent helpers live under `scripts/ainiux/`. `.ainiux-pr/scripts/` is gone. Smart allows validated project commands by default and asks for explicit risks or external filesystem access; wrapping `scripts/ainiux` in `python3 -c` stays denied. OS-level command sandbox remains later.
 
 ## Deferred roadmap
 
