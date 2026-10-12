@@ -2579,6 +2579,15 @@ Error apply_document(const Document& document, cli::Options& options, bool user_
                              candidate.agent_max_turns > 500)) {
                 err = schema_error(entry, "expected an integer from 1 through 500");
             }
+        } else if (name == "agent.run_timeout_seconds") {
+            err = nonnegative_long(entry, candidate.agent_run_timeout_seconds);
+            if (err.ok() && candidate.agent_run_timeout_seconds > 0 &&
+                candidate.agent_run_timeout_seconds >
+                    std::numeric_limits<long>::max() / 1000L) {
+                err = schema_error(
+                    entry,
+                    "expected a non-negative timeout whose millisecond value fits in the platform long range");
+            }
         } else if (name == "agent.security_review_batch_size") {
             long long value = 0;
             err = auto_save_byte_size(entry, value);

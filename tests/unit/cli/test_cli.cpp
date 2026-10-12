@@ -352,6 +352,25 @@ void test_cli_web_search_parse() {
           "--no-builtin-web-search disables hosted web_search");
 }
 
+void test_cli_run_timeout_parse() {
+    check(ainiux::cli::Options{}.agent_run_timeout_seconds == 300,
+          "agent run timeout defaults to 300 seconds");
+
+    const char* argv[] = {"ainiux", "--run-timeout", "600", "-p", "hi"};
+    ainiux::cli::ParseResult parsed = ainiux::cli::parse_args(5, const_cast<char**>(argv));
+    check(parsed.error.ok(), "run timeout parse");
+    check(parsed.options.agent_run_timeout_seconds == 600, "run timeout accepts 600 seconds");
+
+    const char* unlimited[] = {"ainiux", "--run-timeout", "0", "-p", "hi"};
+    parsed = ainiux::cli::parse_args(5, const_cast<char**>(unlimited));
+    check(parsed.error.ok() && parsed.options.agent_run_timeout_seconds == 0,
+          "run timeout 0 disables the cap");
+
+    const char* bad[] = {"ainiux", "--run-timeout", "-1", "-p", "hi"};
+    parsed = ainiux::cli::parse_args(5, const_cast<char**>(bad));
+    check(!parsed.error.ok(), "run timeout rejects negatives");
+}
+
 void test_cli_agent_max_response_bytes_parse() {
     check(ainiux::cli::Options{}.agent_max_response_bytes == 32L * 1024L * 1024L,
           "agent response cap defaults to 32 MiB");
@@ -1034,6 +1053,7 @@ void run_all() {
     test_cli_image_mode_parse();
     test_cli_video_mode_parse();
     test_cli_web_search_parse();
+    test_cli_run_timeout_parse();
     test_cli_agent_max_response_bytes_parse();
     test_cli_html_extract_parse();
     test_cli_output_format_parse();

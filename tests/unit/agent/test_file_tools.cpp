@@ -2568,6 +2568,86 @@ void test_attach_image_tool_hooks() {
     fs::remove_all(workspace, ec);
 }
 
+bool run_timeout_ms_maximum(const agent::ReadToolRegistry& tools, bool& has_maximum,
+                            double& maximum) {
+    has_maximum = false;
+    maximum = 0;
+    for (const provider::FunctionDefinition& definition : tools.definitions()) {
+        if (definition.name != "run") continue;
+        const json::ParseResult parsed = json::parse(definition.parameters_json);
+        if (!parsed.error.ok() || !parsed.value.is_object()) return false;
+        const json::Value* properties = parsed.value.get("properties");
+        if (properties == nullptr || !properties->is_object()) return false;
+        const json::Value* timeout_ms = properties->get("timeout_ms");
+        if (timeout_ms == nullptr || !timeout_ms->is_object()) return false;
+        const json::Value* value = timeout_ms->get("maximum");
+        if (value == nullptr) return true;
+        if (value->type != json::Value::Type::Number) return false;
+        has_maximum = true;
+        maximum = value->number;
+        return true;
+    }
+    return false;
+}
+
+void test_agent_run_timeout_config() {
+    const std::string workspace = write_temp_workspace("run-timeout");
+    agent::ReadToolRegistry tools = make_registry(workspace, true);
+    bool has_maximum = false;
+    double maximum = 0;
+    check(run_timeout_ms_maximum(tools, has_maximum, maximum) && has_maximum &&
+              maximum == 300000,
+          "agent run schema defaults to a 300-second maximum");
+    check(json_ok(tools.execute("run", R"JSON({"command":"pwd","timeout_ms":180000})JSON")),
+          "agent run accepts a timeout above the former 120-second cap");
+    const std::string over_default =
+        tools.execute("run", R"JSON({"command":"pwd","timeout_ms":300001})JSON");
+    check(!json_ok(over_default) && json_error_code(over_default) == "invalid_arguments",
+          "agent run still rejects timeout_ms above the configured maximum");
+
+    agent::index::Options options;
+    options.workspace = workspace;
+    options.max_source_code_file_size = 1024 * 1024;
+    agent::index::RefreshStats stats;
+    check(agent::index::refresh(options, stats).ok(), "refresh for custom run timeout");
+    agent::index::Snapshot snapshot;
+    check(agent::index::load_snapshot(options, snapshot).ok(),
+          "snapshot for custom run timeout");
+    agent::ToolRegistryOptions raised;
+    raised.mutation_policy = agent::MutationPolicy::Full;
+    raised.run_timeout_seconds = 600;
+    agent::ReadToolRegistry raised_tools;
+    check(agent::ReadToolRegistry::create(options, snapshot, {}, raised_tools, raised).ok(),
+          "create registry with a 10-minute run timeout");
+    check(run_timeout_ms_maximum(raised_tools, has_maximum, maximum) && has_maximum &&
+              maximum == 600000,
+          "raised run_timeout_seconds is advertised as the schema maximum");
+    check(json_ok(raised_tools.execute(
+              "run", R"JSON({"command":"pwd","timeout_ms":480000})JSON")),
+          "raised run timeout accepts an 8-minute timeout_ms");
+
+    agent::ToolRegistryOptions unlimited;
+    unlimited.mutation_policy = agent::MutationPolicy::Full;
+    unlimited.run_timeout_seconds = 0;
+    agent::ReadToolRegistry unlimited_tools;
+    check(agent::ReadToolRegistry::create(options, snapshot, {}, unlimited_tools, unlimited)
+              .ok(),
+          "create registry with an unlimited run timeout");
+    check(run_timeout_ms_maximum(unlimited_tools, has_maximum, maximum) && !has_maximum,
+          "unlimited run timeout omits the schema maximum");
+    check(json_ok(unlimited_tools.execute(
+              "run", R"JSON({"command":"pwd","timeout_ms":900000})JSON")),
+          "unlimited run timeout accepts a 15-minute timeout_ms");
+
+    agent::ReadToolRegistry inspection = make_registry(workspace, false);
+    check(run_timeout_ms_maximum(inspection, has_maximum, maximum) && has_maximum &&
+              maximum == 10000,
+          "security-review run keeps a 10-second maximum");
+
+    std::error_code ec;
+    fs::remove_all(workspace, ec);
+}
+
 void test_workspace_script_review_path() {
     const std::string workspace = write_temp_workspace("review-path");
     fs::create_directories(fs::path(workspace) / "scripts" / "ainiux");
@@ -3073,6 +3153,7 @@ void run_all() {
     test_plan_document_mutation_policy();
     test_goal_met_tool_hooks();
     test_attach_image_tool_hooks();
+    test_agent_run_timeout_config();
     test_workspace_script_review_path();
     test_project_scripts_trust_and_execution();
     test_in_project_absolute_and_tilde_paths();

@@ -29,7 +29,7 @@ bool needs_value(const std::string& opt) {
         "--attach",
         "--html-file", "--html-format", "--font", "--max-fetch-bytes", "--max-web-search-results",
         "--max-input-bytes", "--max-image-bytes", "--max-context-bytes",
-        "--max-agent-response-bytes",
+        "--max-agent-response-bytes", "--run-timeout",
         "--max-source-code-file-size", "--trusted-prompt-dir",
         "--workspace", "--bind", "--port", "--server-secret-file", "--mcp-secret-file",
         "--tls-cert", "--tls-key",
@@ -674,6 +674,18 @@ ParseResult parse_args(int argc, char** argv, const Options& base_options) {
                 if (!err.ok()) {
                     return {opts, err};
                 }
+            } else if (opt == "--run-timeout") {
+                Error err = parse_long(opt, value, opts.agent_run_timeout_seconds);
+                if (!err.ok()) {
+                    return {opts, err};
+                }
+                if (opts.agent_run_timeout_seconds > 0 &&
+                    opts.agent_run_timeout_seconds >
+                        std::numeric_limits<long>::max() / 1000L) {
+                    return {opts,
+                            {ErrorCode::BadArgs,
+                             "--run-timeout millisecond value is too large for this platform"}};
+                }
             } else if (opt == "--proxy") {
                 opts.proxy = value;
             } else if (opt == "--fetch-url") {
@@ -990,6 +1002,7 @@ Error validate_security_review_arguments(int argc, char** argv, const Options& o
             option == "--responses-url" || option == "--key-env" || option == "--key-file" ||
             option == "-k" || option == "--key" || option == "--header" ||
             option == "--reasoning" || option == "--connect-timeout" || option == "--timeout" ||
+            option == "--run-timeout" ||
             option == "--proxy" || option == "--trusted-prompt-dir";
         if (takes_value) {
             if (equals == std::string::npos) ++i;
@@ -1076,6 +1089,7 @@ Error validate_agent_run_arguments(int argc, char** argv, const Options& options
             option == "--responses-url" || option == "--key-env" || option == "--key-file" ||
             option == "-k" || option == "--key" || option == "--header" ||
             option == "--reasoning" || option == "--connect-timeout" || option == "--timeout" ||
+            option == "--run-timeout" ||
             option == "--proxy" || option == "--trusted-prompt-dir" ||
             option == "--max-source-code-file-size" || option == "-r" || option == "--run" ||
             option == "--run-file";
@@ -1151,6 +1165,7 @@ Error validate_agent_interactive_arguments(int argc, char** argv, const Options&
             option == "--responses-url" || option == "--key-env" || option == "--key-file" ||
             option == "-k" || option == "--key" || option == "--header" ||
             option == "--reasoning" || option == "--connect-timeout" || option == "--timeout" ||
+            option == "--run-timeout" ||
             option == "--proxy" || option == "--trusted-prompt-dir" || option == "-p" ||
             option == "--prompt" || option == "--prompt-file" || option == "--theme" ||
             option == "--color-mode" ||
@@ -1563,6 +1578,8 @@ Options:
       --max-agent-response-bytes N
                                 Agent LLM HTTP body cap (SSE included); default 32M.
                                 0 disables the cap. Config: agent.max_response_bytes.
+      --run-timeout SECONDS     Agent `run` default and advertised timeout; default 300.
+                                0 disables the timeout. Config: agent.run_timeout_seconds.
       --allow-private-url-fetch Allow loopback/private URL fetches.
 
   Context:

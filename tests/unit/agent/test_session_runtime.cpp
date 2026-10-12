@@ -65,6 +65,7 @@ void test_runtime_options_share_cli_projection() {
     context.options.agent_compact_strategy = CompactionStrategy::Summary;
     context.options.agent_compact_limit = 42;
     context.options.agent_max_turns = 17;
+    context.options.agent_run_timeout_seconds = 900;
     context.options.disable_indexing = true;
     context.options.agent_show_command_output = true;
     context.options.connect_timeout_seconds = 4;
@@ -94,6 +95,7 @@ void test_runtime_options_share_cli_projection() {
     check(!options.auto_compact &&
               options.compact_strategy == CompactionStrategy::Summary &&
               options.compact_limit == 42 && options.max_agent_turns == 17 &&
+              options.run_timeout_seconds == 900 &&
               options.index_mode == agent::SessionRuntimeOptions::IndexMode::Disabled &&
               options.show_command_output,
           "shared runtime options project agent policy settings");

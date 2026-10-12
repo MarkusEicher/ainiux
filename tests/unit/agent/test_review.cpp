@@ -180,9 +180,9 @@ void test_read_tools_and_policy() {
                          return definition.name == "run";
                      });
     check(run_definition != restricted_definitions.end() &&
-              run_definition->parameters_json.find("\"maximum\":120000") !=
+              run_definition->parameters_json.find("\"maximum\":300000") !=
                   std::string::npos,
-          "agent run_command schema has a stable 120-second maximum");
+          "agent run_command schema has a stable 300-second maximum");
 
     std::error_code cleanup;
     fs::remove_all(root, cleanup);

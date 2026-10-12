@@ -1339,7 +1339,7 @@ void test_user_api_setting_is_explicit() {
 void test_config_reads_common_template() {
     ainiux::config::ParseResult parsed = ainiux::config::read_file("config/ainiux.conf");
     check(parsed.error.ok(), "common config file parses");
-    check(parsed.document.entries.size() == 78, "common config has every expected setting");
+    check(parsed.document.entries.size() == 79, "common config has every expected setting");
     ainiux::cli::Options highlight_options;
     ainiux::Error apply_error = ainiux::config::apply_document(parsed.document, highlight_options);
     check(apply_error.ok() && highlight_options.tui_highlight,
@@ -1389,6 +1389,7 @@ void test_config_reads_common_template() {
               options.editor_ai_continue_max_tokens == ainiux::editor::kDefaultAiContinueMaxTokens &&
               options.max_parallel_agents == 4 &&
               options.agent_max_turns == 500 &&
+              options.agent_run_timeout_seconds == 300 &&
               options.security_review_batch_size == 200U * 1024U &&
               options.security_review_log_enabled &&
               options.security_review_log_keep_runs == 3 &&
@@ -1790,6 +1791,30 @@ void test_config_security_review_settings() {
     check(!error.ok(), "security review log retention rejects values above 1000");
 }
 
+void test_config_agent_run_timeout() {
+    check(ainiux::cli::Options{}.agent_run_timeout_seconds == 300,
+          "agent run timeout defaults to 300 seconds");
+
+    ainiux::config::ParseResult parsed =
+        ainiux::config::parse("[agent]\nrun_timeout_seconds = 600\n", "agent-run-timeout.conf");
+    ainiux::cli::Options options;
+    ainiux::Error error = ainiux::config::apply_document(parsed.document, options);
+    check(parsed.error.ok() && error.ok() && options.agent_run_timeout_seconds == 600,
+          "agent.run_timeout_seconds accepts a raised timeout");
+
+    parsed = ainiux::config::parse("[agent]\nrun_timeout_seconds = 0\n", "agent-run-timeout-zero.conf");
+    options = ainiux::cli::Options{};
+    error = ainiux::config::apply_document(parsed.document, options);
+    check(parsed.error.ok() && error.ok() && options.agent_run_timeout_seconds == 0,
+          "agent.run_timeout_seconds 0 disables the run timeout");
+
+    parsed =
+        ainiux::config::parse("[agent]\nrun_timeout_seconds = -1\n", "agent-run-timeout-neg.conf");
+    options = ainiux::cli::Options{};
+    error = ainiux::config::apply_document(parsed.document, options);
+    check(!error.ok(), "agent.run_timeout_seconds rejects negatives");
+}
+
 void test_config_agent_max_response_bytes() {
     check(ainiux::cli::Options{}.agent_max_response_bytes == 32L * 1024L * 1024L,
           "agent max response defaults to 32 MiB");
@@ -2151,6 +2176,7 @@ void run_all() {
     test_config_empty_and_numeric_edge_cases();
     test_config_code_index_size();
     test_config_security_review_settings();
+    test_config_agent_run_timeout();
     test_config_agent_max_response_bytes();
     test_agent_input_height_config();
     test_config_file_read_errors();

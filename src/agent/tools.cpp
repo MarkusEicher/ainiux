@@ -226,6 +226,33 @@ bool get_bool(const json::Value& object, const std::string& key, bool fallback, 
     return true;
 }
 
+constexpr std::size_t kInspectionRunTimeoutMs = 10000;
+
+std::size_t run_timeout_ms_from_seconds(long seconds) {
+    if (seconds <= 0) return 0;
+    const long max_seconds = std::numeric_limits<long>::max() / 1000L;
+    if (seconds > max_seconds)
+        return static_cast<std::size_t>(std::numeric_limits<long>::max());
+    return static_cast<std::size_t>(seconds) * 1000U;
+}
+
+std::size_t run_timeout_cap_ms(bool agent_session, long run_timeout_seconds) {
+    if (!agent_session) return kInspectionRunTimeoutMs;
+    if (run_timeout_seconds <= 0)
+        return static_cast<std::size_t>(std::numeric_limits<long>::max());
+    return run_timeout_ms_from_seconds(run_timeout_seconds);
+}
+
+std::string run_timeout_ms_schema(bool agent_session, long run_timeout_seconds) {
+    if (!agent_session) {
+        return "\"timeout_ms\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":" +
+               std::to_string(kInspectionRunTimeoutMs) + "}";
+    }
+    if (run_timeout_seconds <= 0) return "\"timeout_ms\":{\"type\":\"integer\",\"minimum\":0}";
+    return "\"timeout_ms\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":" +
+           std::to_string(run_timeout_ms_from_seconds(run_timeout_seconds)) + "}";
+}
+
 bool get_size(const json::Value& object, const std::string& key, std::size_t fallback,
               std::size_t maximum, std::size_t& output, std::string& error) {
     const json::Value* value = object.get(key);
@@ -1268,6 +1295,7 @@ Error ReadToolRegistry::create(index::Options index_options,
     loaded.vision_hooks_ = std::move(options.vision_hooks);
     loaded.permission_mode_ = options.permission_mode;
     loaded.permission_controls_ = options.permission_controls;
+    loaded.run_timeout_seconds_ = options.run_timeout_seconds;
     loaded.session_store_ = options.session_store;
     loaded.indexing_enabled_ = options.indexing_enabled;
     loaded.index_access_mode_ = options.index_access_mode;
@@ -3475,10 +3503,9 @@ std::vector<ToolDescriptor> ReadToolRegistry::native_descriptors() const {
                "Agent modes use Guard; restricted sessions allow vetted read-only forms."
              : "Run one read-only inspection command without a shell "
                "(pwd/ls/rg/grep/find/git allowlist).",
-         schema("\"command\":{\"type\":\"string\"},\"cwd\":{\"type\":\"string\"},"
-                "\"timeout_ms\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":" +
-                    std::string(agent_session ? "120000" : "10000") + "},"
-                "\"background\":{\"type\":\"boolean\"}",
+         schema("\"command\":{\"type\":\"string\"},\"cwd\":{\"type\":\"string\"}," +
+                    run_timeout_ms_schema(agent_session, run_timeout_seconds_) +
+                    ",\"background\":{\"type\":\"boolean\"}",
                 "\"command\"")});
 
     add(NativeToolHandler::Fetch, ToolSafetyCategory::Network,
@@ -5069,8 +5096,10 @@ std::string ReadToolRegistry::execute(const std::string& requested_name,
         const bool agent_session =
             mutation_policy_ != MutationPolicy::Disabled;
         const std::size_t timeout_cap =
-            mutation_policy_ == MutationPolicy::Disabled ? 10000 : 120000;
-        std::size_t timeout = full ? 30000 : 10000;
+            run_timeout_cap_ms(agent_session, run_timeout_seconds_);
+        std::size_t timeout = agent_session
+                                  ? run_timeout_ms_from_seconds(run_timeout_seconds_)
+                                  : kInspectionRunTimeoutMs;
         bool background = false;
         if (!get_string(args, "command", command, true, validation_error) ||
             !get_string(args, "cwd", cwd, false, validation_error) ||
@@ -5093,8 +5122,9 @@ std::string ReadToolRegistry::execute(const std::string& requested_name,
                     "policy_denied", "background run is available only in Act mode");
             timeout = 0;
         }
+        const bool unlimited_run = agent_session && run_timeout_seconds_ <= 0;
         if (!get_size(args, "timeout_ms", timeout, timeout_cap, timeout, validation_error) ||
-            (!background && timeout == 0))
+            (!background && timeout == 0 && !unlimited_run))
             return tool_error_result("invalid_arguments",
                                     validation_error.empty() ? "timeout_ms must be positive"
                                                              : validation_error);

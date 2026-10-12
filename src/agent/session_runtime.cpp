@@ -58,6 +58,7 @@ SessionRuntimeOptions make_session_runtime_options(
     options.compact_strategy = context.options.agent_compact_strategy;
     options.compact_limit = context.options.agent_compact_limit;
     options.max_agent_turns = context.options.agent_max_turns;
+    options.run_timeout_seconds = context.options.agent_run_timeout_seconds;
     options.max_parallel_tools = context.options.max_parallel_agents;
     options.index_mode =
         context.options.disable_indexing
@@ -1509,6 +1510,7 @@ Error AgentSessionRuntime::prepare(const provider::RequestContext& context,
     tool_options.search_options = options_.search_options;
     tool_options.permission_mode = permission_mode_;
     tool_options.permission_controls = options_.interactive;
+    tool_options.run_timeout_seconds = options_.run_timeout_seconds;
     tool_options.session_store = &session_store_;
     tool_options.indexing_enabled = indexing_enabled;
     tool_options.goal_hooks.has_active_goal = [this]() { return goal_is_active(goal_); };
