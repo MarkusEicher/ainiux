@@ -433,8 +433,9 @@ ainiux server --bind 192.0.2.10 --tls-cert /secure/server.crt \
   --tls-key /secure/server.key --workspace .
 ```
 
-Remote sessions cannot request or inherit Yolo unless the server also starts
-with `--allow-remote-yolo`. See [the control API guide](docs/api.md) for routes,
+Remote sessions cannot request Yolo unless the server also starts with
+`--allow-remote-yolo`; restored Yolo is capped at Smart. See
+[the control API guide](docs/api.md) for routes,
 limits, authentication, certificate, Host, and Origin rules.
 Run `scripts/test-control-server.sh --build` for the current authenticated
 control-server smoke check. `scripts/test-control-server-pr3.sh` retains the

@@ -71,7 +71,9 @@ executed. MCP tools remain separately qualified as `mcp__server__tool`. See the
 
 ## Permissions and Guard
 
-Interactive agent projects persist Confirm, Smart, or Yolo permission choices. Confirm asks for protected actions. Smart allows vetted low-risk operations (including bounded `git` inspection such as `status`/`diff`/`log`/`check-ignore`/`ls-files`, workspace `python`/`node`/`pytest` forms, `node --test`, and everyday C/C++/Java/C# toolchains) and asks for riskier ones. Git inspection pathspecs may name ignored or metadata paths; `git -C` and `ls`/`cat` of `.ainiux-pr` stay blocked. Yolo reduces prompts and accepts more risk. Guard classifies commands and mutations independently of model prose. Interactive “Ask” decisions require an explicit `y` or `n`; when the Ask is a workspace script, **`r` Review** opens that file in dired read-only view. `q` leaves dired and returns to the same Guard dialog. Headless Ask decisions are denied.
+Interactive agent projects persist Confirm, Smart, or Yolo permission choices.
+Remote WebUI and control-API sessions restore Yolo as Smart unless the server
+starts with `--allow-remote-yolo` or binds loopback. Confirm asks for protected actions. Smart allows vetted low-risk operations (including bounded `git` inspection such as `status`/`diff`/`log`/`check-ignore`/`ls-files`, workspace `python`/`node`/`pytest` forms, `node --test`, and everyday C/C++/Java/C# toolchains) and asks for riskier ones. Git inspection pathspecs may name ignored or metadata paths; `git -C` and `ls`/`cat` of `.ainiux-pr` stay blocked. Yolo reduces prompts and accepts more risk. Guard classifies commands and mutations independently of model prose. Interactive “Ask” decisions require an explicit `y` or `n`; when the Ask is a workspace script, **`r` Review** opens that file in dired read-only view. `q` leaves dired and returns to the same Guard dialog. Headless Ask decisions are denied.
 
 ## Agent questions
 

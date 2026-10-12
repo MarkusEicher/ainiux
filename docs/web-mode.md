@@ -40,7 +40,10 @@ token never appears in cookies, URLs, logs, or rendered output.
 
 WebUI mode defaults to `0.0.0.0` for browser access from another device and
 warns prominently when that means plaintext HTTP. Prefer TLS for an untrusted
-network, or add `--bind 127.0.0.1` for local-only use. Plain `ainiux server`
+network, or add `--bind 127.0.0.1` for local-only use. On a non-loopback bind, a
+project last left in Yolo starts the WebUI agent at Smart. Pass
+`--allow-remote-yolo` to keep or select Yolo from the Permissions control;
+loopback already allows it. Plain `ainiux server`
 keeps its loopback default, does not launch a browser, and never prints a token.
 An explicit `--server-secret-file` takes precedence over
 `AINIUX_SERVER_SECRET`, which takes precedence over the managed file; explicit

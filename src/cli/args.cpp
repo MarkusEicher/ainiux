@@ -1468,7 +1468,9 @@ Options:
       --tls-cert PATH           PEM certificate chain for HTTPS.
       --tls-key PATH            Private PEM key outside the served workspace.
       --insecure-plain-bind     Explicitly allow plain HTTP on a non-loopback bind.
-      --allow-remote-yolo       Permit remote interactive sessions to request Yolo.
+      --allow-remote-yolo       Permit remote interactive sessions to request or
+                                restore Yolo. Without it, restored Yolo starts
+                                at Smart.
       --max-connections N       Simultaneous server connections; default 64.
       --max-jobs N              Retained/in-flight server job cap; default 128.
       --max-sessions N          Interactive agent session cap; default 32.

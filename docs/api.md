@@ -117,8 +117,9 @@ cookies, forwarded-host authority, and cross-origin browser requests do not
 expand the allowlist.
 
 Remote interactive sessions run at Confirm/Smart authority by default. An
-explicit or project-restored Yolo mode is denied/downgraded unless startup also
-includes `--allow-remote-yolo`. This option is deliberately separate from the
+explicit Yolo request is rejected unless startup includes `--allow-remote-yolo`.
+Project-restored Yolo is capped at Smart before tools are armed. Loopback
+binds already allow Yolo. This option is deliberately separate from the
 persisted project setting.
 
 ## Revision-safe workspace editing
@@ -630,7 +631,10 @@ DELETE /ainiux/v1/sessions/:session_id
 Session creation accepts `kind` (`agent`), `provider`, `model`, `api`, `reasoning`,
 `permission_mode` (`confirm`, `smart`, or `yolo`), and `lane`
 (`act` or `lead`). Preparation is asynchronous and returns `202` with an
-opaque session ID. A turn body is `{"text":"..."}` and returns `202`
+opaque session ID. Snapshots include `allow_yolo`. Without
+`--allow-remote-yolo` on a non-loopback bind, an explicit Yolo request returns
+`422 unsupported_feature` and a restored Yolo project starts at Smart. A turn
+body is `{"text":"..."}` and returns `202`
 with a server-generated turn ID. Only one turn may be active per session; a
 concurrent turn returns `409`.
 

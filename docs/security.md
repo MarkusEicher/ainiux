@@ -26,8 +26,9 @@ TLS at a proxy, keep Ainiux on loopback rather than using the plaintext override
 
 Remote Yolo is off independently of project-persisted permissions. Without
 `--allow-remote-yolo`, an explicit Yolo session request is rejected and restored
-Yolo state is capped at Smart before tools are armed. Enabling it grants remote
-clients the same high-risk Guard bypass documented for local Yolo.
+Yolo state is capped at Smart before tools are armed. Loopback binds already
+allow Yolo. Enabling the option grants remote clients the same high-risk Guard
+bypass documented for local Yolo.
 
 ## Control-API workspace boundary
 

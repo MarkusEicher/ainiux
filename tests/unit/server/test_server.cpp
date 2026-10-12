@@ -29,6 +29,7 @@
 
 #include "cli/args.hpp"
 #include "agent/project_settings.hpp"
+#include "agent/session_store.hpp"
 #include "agent/tool_display.hpp"
 #include "chat/settings.hpp"
 #include "config/config.hpp"
@@ -2722,6 +2723,47 @@ void test_server_cli_contract() {
     check(!denied_yolo.error.ok() && denied_yolo.error.code == ErrorCode::UnsupportedFeature,
           "remote session policy denies an explicit Yolo request without startup opt-in");
     remote_sessions.shutdown();
+
+    {
+        agent::AgentSessionStore store;
+        check(store.open(yolo_workspace.u8string()).ok(),
+              "remote Yolo restore test opens the project store");
+        agent::AgentProjectRecord project;
+        project.workspace = yolo_workspace.u8string();
+        project.provider = "none";
+        project.status = "idle";
+        check(agent::settings_json_with_permission_mode(
+                  "{}", agent::PermissionMode::Yolo, project.settings_json)
+                  .ok(),
+              "remote Yolo restore test encodes persisted yolo");
+        check(store.open_project(project).ok(),
+              "remote Yolo restore test writes persisted yolo");
+    }
+    SessionHub restored_sessions(base, yolo_workspace.u8string(), 1, false);
+    const SessionCreateResult capped_yolo = restored_sessions.create(
+        "{\"kind\":\"agent\",\"provider\":\"none\"}");
+    check(capped_yolo.error.ok() && capped_yolo.session,
+          "restored remote Yolo creates a session without startup opt-in");
+    if (capped_yolo.session) {
+        const std::string snapshot = capped_yolo.session->snapshot_json();
+        check(snapshot.find("\"permission_mode\":\"smart\"") != std::string::npos &&
+                  snapshot.find("\"allow_yolo\":false") != std::string::npos,
+              "restored remote Yolo is capped at Smart without startup opt-in");
+    }
+    restored_sessions.shutdown();
+
+    SessionHub allowed_sessions(base, yolo_workspace.u8string(), 1, true);
+    const SessionCreateResult allowed_yolo = allowed_sessions.create(
+        "{\"kind\":\"agent\",\"provider\":\"none\",\"permission_mode\":\"yolo\"}");
+    check(allowed_yolo.error.ok() && allowed_yolo.session,
+          "remote Yolo is accepted when the startup opt-in is enabled");
+    if (allowed_yolo.session) {
+        const std::string snapshot = allowed_yolo.session->snapshot_json();
+        check(snapshot.find("\"permission_mode\":\"yolo\"") != std::string::npos &&
+                  snapshot.find("\"allow_yolo\":true") != std::string::npos,
+              "startup opt-in preserves an explicit remote Yolo request");
+    }
+    allowed_sessions.shutdown();
     std::filesystem::remove_all(yolo_workspace, yolo_cleanup_error);
 }
 

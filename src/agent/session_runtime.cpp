@@ -1663,7 +1663,9 @@ Error AgentSessionRuntime::prepare(const provider::RequestContext& context,
                 return error;
             }
             if (!options_.allow_yolo && permission_mode_ == PermissionMode::Yolo) {
-                permission_mode_ = requested_permission_mode;
+                permission_mode_ = requested_permission_mode == PermissionMode::Yolo
+                                       ? PermissionMode::Smart
+                                       : requested_permission_mode;
             }
             options_.permission_mode = permission_mode_;
             tools_.set_permission_mode(permission_mode_);

@@ -230,6 +230,10 @@ void InteractiveSession::start_preparation() {
             options.restore_lane = false;
             error = controller_->runtime()->prepare(context, token, {}, std::move(options));
             if (error.ok()) {
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    permission_mode_ = controller_->runtime()->permission_mode();
+                }
                 (void)controller_->runtime()->update_project_settings(context);
                 controller_->runtime()->begin_background_index_freshness();
             }
@@ -354,7 +358,8 @@ std::string InteractiveSession::snapshot_json() const {
                          ",\"provider\":" + json::quote(context_.profile.name) +
                          ",\"model\":" + json::quote(context_.options.model) +
                          ",\"lane\":" + json::quote(active_lane_name(active_lane_)) +
-                         ",\"permission_mode\":" + json::quote(agent::permission_mode_name(permission_mode_));
+                         ",\"permission_mode\":" + json::quote(agent::permission_mode_name(permission_mode_)) +
+                         ",\"allow_yolo\":" + std::string(allow_yolo_ ? "true" : "false");
     result += ",\"reasoning\":" +
               json::quote(config::reasoning_selection_value(context_.options.reasoning));
     result += ",\"settings\":" + public_model_settings(context_.options) +
@@ -1053,14 +1058,18 @@ SessionCreateResult SessionHub::create(const std::string& body) {
         if (!error.ok()) return {{}, public_context_error(std::move(error))};
         options = std::move(selected_options);
     }
-    if (!permission_text.empty()) {
+    const bool explicit_permission = !permission_text.empty();
+    if (explicit_permission) {
         if (!agent::parse_permission_mode(ascii_lower(ascii_trim(permission_text)),
                                           permission_mode))
             return {{}, field_error("permission_mode", "must be confirm, smart, or yolo")};
     }
-    if (permission_mode == agent::PermissionMode::Yolo && !allow_yolo_)
-        return {{}, {ErrorCode::UnsupportedFeature,
-                     "remote Yolo requires the server startup option --allow-remote-yolo"}};
+    if (permission_mode == agent::PermissionMode::Yolo && !allow_yolo_) {
+        if (explicit_permission)
+            return {{}, {ErrorCode::UnsupportedFeature,
+                         "remote Yolo requires the server startup option --allow-remote-yolo"}};
+        permission_mode = agent::PermissionMode::Smart;
+    }
     if (!provider_name.empty()) {
         provider::apply_provider_target(options, provider_name);
         options.provider_explicit = true;
