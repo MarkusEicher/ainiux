@@ -1339,7 +1339,7 @@ void test_user_api_setting_is_explicit() {
 void test_config_reads_common_template() {
     ainiux::config::ParseResult parsed = ainiux::config::read_file("config/ainiux.conf");
     check(parsed.error.ok(), "common config file parses");
-    check(parsed.document.entries.size() == 79, "common config has every expected setting");
+    check(parsed.document.entries.size() == 81, "common config has every expected setting");
     ainiux::cli::Options highlight_options;
     ainiux::Error apply_error = ainiux::config::apply_document(parsed.document, highlight_options);
     check(apply_error.ok() && highlight_options.tui_highlight,
@@ -1927,6 +1927,20 @@ void test_agent_input_height_config() {
           "agent thinking token refresh rejects values above 3600 actionably");
 }
 
+void test_history_and_agent_log_limits() {
+    ainiux::cli::Options options;
+    auto parsed = ainiux::config::parse("[tui]\nhistory_max_lines = 600\n[agent]\nlog_keep_sessions = 2\nsecurity_review_log_keep_runs = 7\n", "limits");
+    check(parsed.error.ok() && ainiux::config::apply_document(parsed.document, options).ok() &&
+              options.history_max_lines == 600 && options.agent_log_keep_sessions == 2 &&
+              options.security_review_log_keep_runs == 7,
+          "display and independent agent/review retention settings are layered");
+    for (const std::string value : {"0", "10001", "-1"}) {
+        parsed = ainiux::config::parse("[tui]\nhistory_max_lines = " + value + "\n", "limits");
+        check(!ainiux::config::apply_document(parsed.document, options).ok(),
+              "config rejects invalid display limit " + value);
+    }
+}
+
 }  // namespace
 
 void test_image_catalog_parse_and_match() {
@@ -2165,6 +2179,7 @@ void test_agent_lead_request_bundle() {
 }
 
 void run_all() {
+    test_history_and_agent_log_limits();
     test_config_applies_user_settings();
     test_config_applies_model_catalog();
     test_image_catalog_parse_and_match();

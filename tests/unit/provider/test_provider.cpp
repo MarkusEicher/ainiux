@@ -1346,6 +1346,20 @@ void test_tui_startup_provider_selection_helpers() {
     restored_agent.agent_project_settings_restored = true;
     check(!ainiux::provider::tui_needs_startup_provider_selection(restored_agent),
           "agent with restored project settings skips provider selection");
+    restored_agent.provider = "custom_openai_chat";
+    restored_agent.base_url.clear();
+    check(ainiux::provider::tui_needs_startup_provider_selection(restored_agent),
+          "restored custom provider without an endpoint requests setup");
+    ainiux::provider::apply_tui_startup_default(restored_agent);
+    check(restored_agent.provider == "none" &&
+          ainiux::provider::build_context(restored_agent).error.ok(),
+          "incomplete restored agent starts locally without BadUrl");
+    restored_agent.provider = "retired-profile";
+    check(ainiux::provider::tui_needs_startup_provider_selection(restored_agent),
+          "unknown inherited profiles recover through startup setup");
+    restored_agent.provider_explicit = true;
+    check(!ainiux::provider::tui_needs_startup_provider_selection(restored_agent),
+          "explicit invalid provider values retain strict validation");
 }
 
 void test_editor_startup_local_only_default() {

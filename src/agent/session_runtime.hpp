@@ -133,7 +133,8 @@ struct SessionRuntimeOptions {
     bool interactive = false;  // turn-cap can return needs_user_continue
     bool enable_session_db = true;
     bool enable_agent_log = true;
-    int security_review_log_keep_runs = 20;
+    int agent_log_keep_sessions = 1;
+    int history_max_lines = 500;
     std::string trusted_prompt_dir;
     std::size_t max_source_code_file_size = 10 * 1024 * 1024;
     HistoryBackupPolicy history_backup;

@@ -670,6 +670,52 @@ Error AgentSessionStore::load_messages(std::vector<AgentMessageRecord>& messages
     return ok_error();
 }
 
+Error AgentSessionStore::load_display_tail(std::vector<AgentMessageRecord>& messages, int limit,
+                                          long long after, size_t content_bytes) const {
+    messages.clear();
+    content_bytes = std::max(size_t{1}, std::min(size_t{16U * 1024U * 1024U}, content_bytes));
+    const std::string sql =
+        "SELECT id, seq, created_at, role, lane, turn, "
+        "CAST(substr(CAST(content AS BLOB), -?3) AS TEXT), tool_name, tool_ok, '' "
+        "FROM messages WHERE seq>?1 AND role NOT IN ('summary','handoff') "
+        "ORDER BY seq DESC LIMIT ?2";
+    Statement statement;
+    Error error = statement.prepare(db_, path_, sql.c_str());
+    if (!error.ok()) return error;
+    error = statement.bind_int64(db_, path_, 1, after);
+    if (!error.ok()) return error;
+    error = statement.bind_int(db_, path_, 2, std::max(1, std::min(10000, limit)));
+    if (!error.ok()) return error;
+    error = statement.bind_int64(db_, path_, 3, static_cast<long long>(content_bytes));
+    if (!error.ok()) return error;
+    size_t bytes = 0;
+    int rc;
+    while ((rc = statement.step()) == SQLITE_ROW) {
+        AgentMessageRecord row;
+        row.id = statement.column_int64(0);
+        row.seq = statement.column_int64(1);
+        row.created_at = statement.column_int64(2);
+        row.role = statement.column_text(3);
+        row.lane = statement.column_text(4);
+        row.turn = statement.column_int64(5);
+        row.content = statement.column_text(6);
+        size_t from = 0;
+        while (from < row.content.size() &&
+               (static_cast<unsigned char>(row.content[from]) & 0xc0U) == 0x80U) ++from;
+        row.content.erase(0, from);
+        if (!messages.empty() && bytes + row.content.size() > 16U * 1024U * 1024U) break;
+        bytes += row.content.size();
+        row.tool_name = statement.column_text(7);
+        row.tool_ok = statement.column_int(8) != 0;
+        row.args_preview = statement.column_text(9);
+        messages.push_back(std::move(row));
+    }
+    if (rc != SQLITE_ROW && rc != SQLITE_DONE)
+        return sqlite_error(db_, "could not load display history", path_);
+    std::reverse(messages.begin(), messages.end());
+    return ok_error();
+}
+
 Error AgentSessionStore::load_message_page(std::vector<AgentMessageRecord>& messages,
                                           long long before, int limit, long long after) const {
     messages.clear();

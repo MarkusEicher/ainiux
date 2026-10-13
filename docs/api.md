@@ -598,6 +598,10 @@ persist in the existing workspace project row, do not start tools, and require
 an idle agent. Stale revisions return `409`. If multiple API sessions exist,
 close the extra sessions before using the singleton workspace configuration.
 Editor-assist jobs default to this configuration, not the selected chat thread.
+`history_max_lines` is a shared display setting (integer string, 1–10000, default
+500) exposed in Chat and workspace Settings metadata. It bounds browser/terminal
+scrollback formatting; it does not trim stored messages or provider context.
+
 Chat, run, and editor-assist job bodies also accept a partial `settings`
 object with the same validation.
 

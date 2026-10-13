@@ -152,8 +152,7 @@ void AgentController::join_turn() {
 void AgentController::shutdown(bool finish_open_session, const std::string& reason) {
     cancel_turn();
     join_turn();
-    if (finish_open_session && runtime_ && runtime_->prepared() &&
-        runtime_->session_id() > 0) {
+    if (finish_open_session && runtime_ && runtime_->prepared()) {
         const std::string note =
             reason.empty() ? std::string("agent controller shutdown") : reason;
         (void)runtime_->finish_session("cancelled", "", "Cancelled", note);

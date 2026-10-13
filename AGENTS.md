@@ -250,6 +250,15 @@ agent loops, approval decisions, or filesystem mutation logic in a UI.
 
 ### Terminal, editor, and chat
 
+- Interactive Agent startup must work without a configured provider, model, or
+  endpoint. Prepare locally, offer the missing code index first, then select
+  provider and model. A restored settings record alone is not readiness; check
+  the actual endpoint. Keep headless request validation strict.
+- Chat/Agent history is a bounded display projection in terminal and WebUI:
+  start with a viewport and expand on scroll up to `history_max_lines` (500 by
+  default). Bound source work before Markdown/highlighting, cache terminal rows,
+  and never rebuild the complete transcript for a composer keypress. Preserve
+  full durable transcripts and model context independently of display limits.
 - Preserve grapheme-aware navigation, terminal cell widths, resize behavior, and
   valid UTF-8 rendering. Invalid bytes must not crash the UI.
 - The terminal/event owner alone draws or mutates chat/editor/agent state.
@@ -263,6 +272,12 @@ agent loops, approval decisions, or filesystem mutation logic in a UI.
 
 ### Agent and code index
 
+- Agent diagnostic retention is independent of security-review retention:
+  `[agent] log_keep_sessions = 1` retains the current log plus one previous
+  session while running, and only the latest session after graceful exit.
+  Finalize logs even without a model turn; include abandoned partials in pruning,
+  preserve potentially active processes' logs, and never prune transcripts or
+  file backups under this policy. `0` explicitly disables log pruning.
 - Interactive agent owns one session-scoped `AgentController`. Temporary editor or
   dired hops may leave a turn running; leaving for chat or quitting finishes the
   project session and disarms tools.

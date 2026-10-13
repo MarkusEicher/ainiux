@@ -61,7 +61,7 @@
                 <button id="chat-web-search-button" class="tool-button" type="button" aria-pressed="false" aria-keyshortcuts="Alt+S" title="Search the web for chat messages · Alt+S">Web search off</button>
               </div>
             </div>
-            <div id="chat-messages" class="message-list empty-state" aria-live="polite">Choose or create a thread.</div>
+            <div id="chat-messages" class="message-list empty-state" tabindex="0" aria-label="Chat history" aria-live="polite">Choose or create a thread.</div>
             <form id="chat-form" class="composer chat-composer">
               <div id="chat-attach-list" class="chat-attach-list" aria-live="polite"></div>
               <label class="sr-only" for="chat-input">Message</label>
@@ -116,7 +116,7 @@
             </div>
             <div class="agent-state"><span id="agent-meta" class="muted">Open Agent to initialize this workspace.</span><span id="agent-metrics" class="metrics-strip" aria-live="polite"></span></div>
           </div>
-          <div id="agent-events" class="event-list empty-state" aria-live="polite">Open Agent to initialize this workspace.</div>
+          <div id="agent-events" class="event-list empty-state" tabindex="0" aria-label="Agent history" aria-live="polite">Open Agent to initialize this workspace.</div>
           <form id="agent-turn-form" class="composer agent-composer">
             <label class="sr-only" for="agent-turn-input">Agent instruction</label>
             <textarea id="agent-turn-input" rows="4" maxlength="262144" required disabled placeholder="Describe the task…" aria-keyshortcuts="Enter Shift+Enter Alt+Enter Control+Enter Meta+Enter Alt+P Alt+M Alt+T Escape"></textarea>

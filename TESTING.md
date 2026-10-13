@@ -96,6 +96,12 @@ to capture the test's desktop and mobile views for visual inspection.
 - `tests/integration/test_code_index.sh` — project-local refresh, ignore/skip behavior, Markdown output, stale snapshots, and CLI isolation.
 - `tests/integration/test_sqlite_persistence.sh` — SQLite-backed TUI persistence via `tui_sqlite_driver.py`.
 - `tests/integration/tui_startup_selection_driver.py` — isolated PTY coverage for bare-offline chat and one-/multiple-model startup discovery.
+  Agent cases cover the missing-index offer before provider/model setup and
+  incomplete saved endpoints. Bounded-history units check redraw cache reuse,
+  newest-row ordering, giant UTF-8 messages and unchanged durable transcripts;
+  `test_history_window.mjs` checks the browser projection. Agent log tests cover
+  previous/current session retention, no-turn finalization, abandoned partials,
+  active owners and failed publication.
 - `tests/integration/clipboard_driver.py` — focused fake-helper/OSC 52 PTY coverage for editor and shared chat/agent input clipboard behavior.
 - `tests/mock_server/` — Python HTTP mocks for OpenAI-compatible APIs and slow responses. The integration scripts launch protocol-isolated Chat Completions and Responses instances.
 - `tests/mock/` — POSIX `LD_PRELOAD` shim for disk-full simulation.

@@ -85,6 +85,17 @@ number or strict ordering between otherwise independent work.
 
 Continue small, test-backed improvements to the shipped product:
 
+Interactive Agent must start with no provider/model/endpoint configuration:
+local preparation and an optional code-index offer precede provider/model setup.
+Incomplete restored selections must recover through setup. Terminal and browser
+Chat/Agent display work must depend on the visible scroll window, not lifetime
+transcript length: start with one viewport, expand on demand up to a configurable
+500-row default, and preserve complete transcripts independently. Agent JSONL
+diagnostics retain one completed session by default, plus the active log; graceful
+exit finalizes even a no-turn session, and abandoned crash logs share that
+retention budget. Acceptance includes startup ordering, bounded redraw work,
+large-message handling, settings persistence, and safe log failure/cleanup tests.
+
 - provider capability/error normalization and broader Responses compatibility;
 - benchmark cutoff and judge calibration with auditable raw evidence;
 - terminal/editor responsiveness, resize behavior, Unicode, and interaction polish;

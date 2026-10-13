@@ -46,7 +46,9 @@ void render(const chat::Session& session,
             const char* panel_title_override,
             bool agent_mode,
             const AgentChrome& agent_chrome,
-            const std::vector<StyledLine>* overlay_lines) {
+            const std::vector<StyledLine>* overlay_lines,
+            size_t history_max_lines,
+            HistoryRenderCache* history_cache) {
     const TuiSize terminal = terminal_size();
     // Never paint the host's true last column (see usable_terminal_cols).
     const int paint_cols = usable_terminal_cols(terminal.cols);
@@ -96,7 +98,11 @@ void render(const chat::Session& session,
             : panel_active
             ? panel_lines_for_text(panel_text, mode, history_cols, panel_title_override)
             : history_lines_for_session(session, history_cols, show_thinking_traces, activity_kind,
-                                        activity_frame, syntax_highlight, agent_mode);
+                                        activity_frame, syntax_highlight, agent_mode,
+                                        std::min(history_max_lines,
+                                            static_cast<size_t>(std::max(1, layout.history_rows)) +
+                                            static_cast<size_t>(std::max(0, history_scroll)) + 1),
+                                        history_cache);
     if (agent_choice_active && !panel_text.empty() && !panel_active) {
         std::vector<StyledLine> details =
             panel_lines_for_text(panel_text, mode, history_cols, panel_title_override);

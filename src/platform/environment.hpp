@@ -40,5 +40,7 @@ class ProcessEnvironmentGuard {
 };
 
 unsigned long long current_process_id();
+// Conservative liveness probe: permission/inspection failures count as alive.
+bool process_may_be_running(unsigned long long pid);
 
 }  // namespace ainiux::platform

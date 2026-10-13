@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <cerrno>
+#include <limits>
 #include <string>
 
 #if defined(_WIN32)
@@ -17,6 +19,7 @@
 #else
 #include <limits.h>
 #include <unistd.h>
+#include <signal.h>
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
 #endif
@@ -146,6 +149,26 @@ unsigned long long current_process_id() {
     return static_cast<unsigned long long>(GetCurrentProcessId());
 #else
     return static_cast<unsigned long long>(::getpid());
+#endif
+}
+
+bool process_may_be_running(unsigned long long pid) {
+#if defined(_WIN32)
+    if (pid == 0 || pid > std::numeric_limits<DWORD>::max()) return true;
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE,
+                                 static_cast<DWORD>(pid));
+    if (process == nullptr) return GetLastError() != ERROR_INVALID_PARAMETER;
+    struct ProcessHandle {
+        HANDLE value;
+        ~ProcessHandle() { CloseHandle(value); }
+    } handle{process};
+    DWORD code = STILL_ACTIVE;
+    const bool alive = !GetExitCodeProcess(process, &code) || code == STILL_ACTIVE;
+    return alive;
+#else
+    if (pid == 0 || pid > static_cast<unsigned long long>(std::numeric_limits<pid_t>::max()))
+        return true;
+    return ::kill(static_cast<pid_t>(pid), 0) == 0 || errno != ESRCH;
 #endif
 }
 

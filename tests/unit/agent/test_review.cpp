@@ -16,6 +16,7 @@
 #include "agent/prompts.hpp"
 #include "agent/review.hpp"
 #include "agent/review_log.hpp"
+#include "platform/environment.hpp"
 #include "agent/tool_args.hpp"
 #include "agent/tools.hpp"
 #include "html/html.hpp"
@@ -760,9 +761,50 @@ void test_review_logger() {
     fs::remove_all(target, cleanup);
 }
 
+void test_agent_session_log_retention() {
+    const fs::path root = temporary_workspace();
+    Error error;
+    const fs::path directory = root / ".ainiux-pr/logs/agent";
+    fs::create_directories(directory);
+    const fs::path stale = directory / "agent-20000101T000000.000Z-2147483647-1.jsonl.partial";
+    write_file(stale, "crash evidence\n");
+    const fs::path live = directory / ("agent-20000102T000000.000Z-" +
+        std::to_string(ainiux::platform::current_process_id()) + "-1.jsonl.partial");
+    write_file(live, "active evidence\n");
+    write_file(directory / "unrelated.jsonl", "keep\n");
+    std::string previous;
+    for (int i = 0; i < 3; ++i) {
+        auto logger = ainiux::agent::ReviewLogger::create(root.string(), 1, {}, {}, error, "agent");
+        check(error.ok() && logger, "open agent session log with one-session retention");
+        if (!logger) break;
+        if (!previous.empty()) check(fs::exists(previous), "previous session survives while new session runs");
+        logger->event("test", {"session"});
+        const std::string next = logger->final_path();
+        logger->finish({}, "success");
+        check(fs::exists(next) && (previous.empty() || !fs::exists(previous)),
+              "graceful completion retains only the latest completed session");
+        previous = next;
+    }
+    check(!fs::exists(stale) && fs::exists(live) && fs::exists(directory / "unrelated.jsonl"),
+          "retention prunes abandoned crash logs, preserves active and unrelated files");
+    auto failed = ainiux::agent::ReviewLogger::create(root.string(), 1, {}, {}, error, "agent");
+    if (failed) {
+        fs::create_directory(fs::u8path(failed->final_path()));
+        failed->finish({}, "success");
+        check(fs::exists(failed->partial_path()) && fs::exists(previous),
+              "failed atomic finalization preserves previous session and partial evidence");
+    }
+    auto unlimited = ainiux::agent::ReviewLogger::create(root.string(), 0, {}, {}, error, "agent");
+    if (unlimited) unlimited->finish({}, "success");
+    check(fs::exists(previous), "zero retention setting keeps all sessions");
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
 }  // namespace
 
 void run_all() {
+    test_agent_session_log_retention();
     test_tool_argument_pipeline();
     test_read_tools_and_policy();
     test_process_runner();

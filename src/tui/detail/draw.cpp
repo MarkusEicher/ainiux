@@ -603,16 +603,88 @@ std::vector<StyledLine> history_lines_for_session(const chat::Session& session,
                                                   ActivityKind activity_kind,
                                                   size_t activity_frame,
                                                   bool markdown_highlight,
-                                                  bool agent_mode) {
-    std::vector<StyledLine> history;
+                                                  bool agent_mode,
+                                                  size_t max_lines,
+                                                  HistoryRenderCache* supplied_cache) {
+    if (max_lines == 0) return {};
+    max_lines = std::min(size_t{10000}, max_lines);
+    HistoryRenderCache local_cache;
+    HistoryRenderCache& cache = supplied_cache ? *supplied_cache : local_cache;
+    if (cache.cols != cols || cache.max_lines != max_lines ||
+        cache.thinking != show_thinking_traces || cache.highlight != markdown_highlight ||
+        cache.agent != agent_mode) {
+        cache.entries.clear();
+        cache.cols = cols;
+        cache.max_lines = max_lines;
+        cache.thinking = show_thinking_traces;
+        cache.highlight = markdown_highlight;
+        cache.agent = agent_mode;
+    }
+    std::vector<std::vector<StyledLine>> groups;
+    size_t count = 0;
+    std::map<size_t, HistoryRenderCache::Entry> retained;
     const int min_content_width = 8;
-    // Agent total task time is relative to the most recent user message timestamp.
-    long long agent_turn_start_ms = 0;
-    for (size_t message_index = 0; message_index < session.messages.size(); ++message_index) {
-        const provider::Message& message = session.messages[message_index];
-        if (agent_mode && message.role == "user" && message.created_at_ms > 0) {
-            agent_turn_start_ms = message.created_at_ms;
+    for (size_t cursor = session.messages.size(), examined = 0;
+         cursor > 0 && count < max_lines && examined++ < max_lines; ) {
+        const size_t message_index = --cursor;
+        const provider::Message& original = session.messages[message_index];
+        // Read a bounded suffix BEFORE Markdown/table formatting. One enormous
+        // message must not defeat the history limit (including a giant line).
+        provider::Message message;
+        message.role = original.role;
+        message.created_at_ms = original.created_at_ms;
+        const size_t byte_limit = static_cast<size_t>(std::min(
+            16ULL * 1024ULL * 1024ULL,
+            static_cast<unsigned long long>(max_lines) * std::max(8, cols) * 16ULL));
+        size_t from = original.content.size() > byte_limit ? original.content.size() - byte_limit : 0;
+        size_t physical_lines = 0;
+        for (size_t pos = original.content.size(); pos > from; ) {
+            if (original.content[--pos] == '\n' && ++physical_lines > max_lines) {
+                from = pos + 1;
+                break;
+            }
         }
+        while (from < original.content.size() &&
+               (static_cast<unsigned char>(original.content[from]) & 0xc0U) == 0x80U) ++from;
+        message.content = original.content.substr(from);
+        // A clipped hidden reasoning block may start with its closing tag.
+        if (!show_thinking_traces && from > 0) {
+            const size_t close = find_tag_case_insensitive(message.content, "</think>", 0);
+            const size_t open = find_tag_case_insensitive(message.content, "<think>", 0);
+            if (close != std::string::npos && (open == std::string::npos || close < open))
+                message.content.erase(0, close + 8);
+        }
+        long long agent_turn_start_ms = original.agent_turn_started_ms;
+        if (agent_mode) {
+            const size_t lower = message_index > max_lines ? message_index - max_lines : 0;
+            for (size_t i = message_index + 1; i > lower; ) {
+                const auto& candidate = session.messages[--i];
+                if (candidate.role == "user") {
+                    agent_turn_start_ms = candidate.created_at_ms;
+                    break;
+                }
+            }
+        }
+        const bool last = message_index + 1 == session.messages.size();
+        const bool animated = last || is_agent_working_notice(message.content) ||
+                              is_agent_waiting_notice(message.content);
+        const ActivityKind message_activity = animated ? activity_kind : ActivityKind::None;
+        const size_t message_frame = animated && activity_kind != ActivityKind::None ? activity_frame : 0;
+        auto found = cache.entries.find(message_index);
+        if (found != cache.entries.end() && found->second.role == message.role &&
+            found->second.content == message.content &&
+            found->second.created_at_ms == message.created_at_ms &&
+            found->second.turn_started_ms == agent_turn_start_ms && found->second.last == last &&
+            found->second.activity == message_activity && found->second.activity_frame == message_frame) {
+            auto entry = std::move(found->second);
+            const size_t take = std::min(max_lines - count, entry.lines.size());
+            groups.emplace_back(entry.lines.end() - take, entry.lines.end());
+            count += take;
+            retained.emplace(message_index, std::move(entry));
+            continue;
+        }
+        ++cache.formatted_messages;
+        std::vector<StyledLine> history;
         // Agent mode chrome is minimal: user prompts as "> text", tool/assistant
         // output flush-left without "Assistant:" / "Tool:" labels or hanging indent.
         std::string prefix;
@@ -758,7 +830,6 @@ std::vector<StyledLine> history_lines_for_session(const chat::Session& session,
             StyledLine line;
             line.segments.push_back({prefix, label_role});
             history.push_back(std::move(line));
-            continue;
         }
         for (size_t i = 0; i < wrapped.size(); ++i) {
             StyledLine line;
@@ -773,7 +844,27 @@ std::vector<StyledLine> history_lines_for_session(const chat::Session& session,
             line.segments.insert(line.segments.end(), wrapped[i].begin(), wrapped[i].end());
             history.push_back(std::move(line));
         }
+        if (history.size() > max_lines)
+            history.erase(history.begin(), history.end() - max_lines);
+        HistoryRenderCache::Entry entry;
+        entry.role = message.role;
+        entry.content = std::move(message.content);
+        entry.created_at_ms = message.created_at_ms;
+        entry.turn_started_ms = agent_turn_start_ms;
+        entry.last = last;
+        entry.activity = message_activity;
+        entry.activity_frame = message_frame;
+        entry.lines = std::move(history);
+        const size_t take = std::min(max_lines - count, entry.lines.size());
+        groups.emplace_back(entry.lines.end() - take, entry.lines.end());
+        count += take;
+        retained.emplace(message_index, std::move(entry));
     }
+    cache.entries = std::move(retained);
+    std::vector<StyledLine> history;
+    history.reserve(count);
+    for (auto group = groups.rbegin(); group != groups.rend(); ++group)
+        for (auto& line : *group) history.push_back(std::move(line));
     return history;
 }
 

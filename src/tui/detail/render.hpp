@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include <map>
 
 #include "chat/session.hpp"
 #include "common.hpp"
@@ -24,6 +25,25 @@ struct RenderStyle {
 struct TuiSize {
     int rows = 24;
     int cols = 80;
+};
+
+// Owned by one terminal session. Only entries used by the bounded viewport
+// survive a draw; composing text never invalidates transcript formatting.
+struct HistoryRenderCache {
+    struct Entry {
+        std::string role, content;
+        long long created_at_ms = 0, turn_started_ms = 0;
+        bool last = false;
+        size_t activity_frame = 0;
+        ActivityKind activity = ActivityKind::None;
+        std::vector<StyledLine> lines;
+    };
+    int cols = 0;
+    size_t max_lines = 0;
+    bool thinking = false, highlight = false, agent = false;
+    std::map<size_t, Entry> entries;
+    // Instrumentation for deterministic work-bound regression tests.
+    size_t formatted_messages = 0;
 };
 
 TuiSize terminal_size();
@@ -50,7 +70,9 @@ std::vector<StyledLine> history_lines_for_session(const chat::Session& session,
                                                   ActivityKind activity_kind = ActivityKind::None,
                                                   size_t activity_frame = 0,
                                                   bool markdown_highlight = true,
-                                                  bool agent_mode = false);
+                                                  bool agent_mode = false,
+                                                  size_t max_lines = 500,
+                                                  HistoryRenderCache* cache = nullptr);
 std::vector<StyledLine> panel_lines_for_text(const std::string& text,
                                                TuiMode mode,
                                                int cols,
@@ -76,6 +98,8 @@ void render(const chat::Session& session,
             const char* panel_title_override = nullptr,
             bool agent_mode = false,
             const AgentChrome& agent_chrome = AgentChrome{},
-            const std::vector<StyledLine>* overlay_lines = nullptr);
+            const std::vector<StyledLine>* overlay_lines = nullptr,
+            size_t history_max_lines = 500,
+            HistoryRenderCache* history_cache = nullptr);
 
 }  // namespace ainiux::tui::detail

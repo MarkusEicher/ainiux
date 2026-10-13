@@ -22,6 +22,7 @@
 #endif
 
 #include "agent/project_paths.hpp"
+#include "platform/environment.hpp"
 #include "html/html.hpp"
 #include "security/redact.hpp"
 
@@ -149,6 +150,22 @@ void add_error(json::Value& fields, const Error& error) {
     fields.object["error_message"] = string_value(error.message);
 }
 
+void sort_session_logs(std::vector<std::string>& files, const std::string& current) {
+    std::sort(files.begin(), files.end(), [](const std::string& left, const std::string& right) {
+        const size_t left_suffix = left.rfind('-'), right_suffix = right.rfind('-');
+        const std::string left_prefix = left.substr(0, left_suffix);
+        const std::string right_prefix = right.substr(0, right_suffix);
+        if (left_prefix != right_prefix) return left_prefix < right_prefix;
+        try {
+            return std::stoull(left.substr(left_suffix + 1)) <
+                   std::stoull(right.substr(right_suffix + 1));
+        } catch (const std::exception&) { return left < right; }
+    });
+    // The just-published session is newest even if the wall clock moved back.
+    const auto found = std::find(files.begin(), files.end(), current);
+    if (found != files.end()) std::rotate(found, found + 1, files.end());
+}
+
 }  // namespace
 
 ReviewLogger::~ReviewLogger() {
@@ -271,6 +288,7 @@ Error ReviewLogger::initialize(const std::string& workspace, int keep_runs,
     if (fd_ < 0) return {ErrorCode::FileWrite, "could not choose a unique security-review log name"};
 #endif
     active_ = true;
+    if (run_kind_ == "agent") prune_completed();
     return ok_error();
 }
 
@@ -492,6 +510,17 @@ void ReviewLogger::prune_completed() {
     const std::string pattern =
         "^" + run_kind_ + R"(-[0-9]{8}T[0-9]{6}\.[0-9]{3}Z-[0-9]+-[0-9]+\.jsonl$)";
     const std::regex recognized(pattern);
+    const std::regex abandoned_pattern(
+        "^agent-" + std::string(R"([0-9]{8}T[0-9]{6}\.[0-9]{3}Z-([0-9]+)-[0-9]+\.jsonl\.partial$)"));
+    auto eligible = [&](const std::string& name) {
+        if (std::regex_match(name, recognized)) return true;
+        if (run_kind_ != "agent" || name == partial_name_) return false;
+        std::smatch match;
+        if (!std::regex_match(name, match, abandoned_pattern)) return false;
+        try {
+            return !platform::process_may_be_running(std::stoull(match[1].str()));
+        } catch (const std::exception&) { return false; }
+    };
     const std::string warn_label =
         run_kind_ == "security-review" ? "SECURITY REVIEW LOG WARNING: " : "AGENT LOG WARNING: ";
 #if defined(_WIN32)
@@ -500,7 +529,7 @@ void ReviewLogger::prune_completed() {
     for (fs::directory_iterator iterator(fs::u8path(directory_), enumeration_error), end;
          !enumeration_error && iterator != end; iterator.increment(enumeration_error)) {
         const std::string name = iterator->path().filename().u8string();
-        if (!std::regex_match(name, recognized)) continue;
+        if (!eligible(name)) continue;
         std::error_code status_error;
         const fs::file_status status = iterator->symlink_status(status_error);
         bool linked = true;
@@ -517,7 +546,7 @@ void ReviewLogger::prune_completed() {
         warned_ = true;
         return;
     }
-    std::sort(files.begin(), files.end());
+    sort_session_logs(files, final_name_);
     while (files.size() > static_cast<std::size_t>(keep_runs_)) {
         const fs::path victim = fs::u8path(directory_) / fs::u8path(files.front());
         files.erase(files.begin());
@@ -534,7 +563,9 @@ void ReviewLogger::prune_completed() {
         }
     }
 #else
-    const int duplicate = ::dup(directory_fd_);
+    // dup() shares the directory seek offset: a second prune would start at
+    // EOF after the initialization scan. Open an independent descriptor.
+    const int duplicate = ::openat(directory_fd_, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     DIR* raw_directory = duplicate < 0 ? nullptr : ::fdopendir(duplicate);
     if (raw_directory == nullptr) {
         if (duplicate >= 0) ::close(duplicate);
@@ -552,7 +583,7 @@ void ReviewLogger::prune_completed() {
         dirent* entry = ::readdir(directory.get());
         if (entry == nullptr) { read_error = errno; break; }
         const std::string name = entry->d_name;
-        if (!std::regex_match(name, recognized)) continue;
+        if (!eligible(name)) continue;
         struct stat info{};
         if (::fstatat(directory_fd_, name.c_str(), &info, AT_SYMLINK_NOFOLLOW) == 0 &&
             S_ISREG(info.st_mode)) files.push_back(name);
@@ -565,7 +596,7 @@ void ReviewLogger::prune_completed() {
         warned_ = true;
         return;
     }
-    std::sort(files.begin(), files.end());
+    sort_session_logs(files, final_name_);
     while (files.size() > static_cast<std::size_t>(keep_runs_)) {
         const std::string victim = files.front();
         files.erase(files.begin());

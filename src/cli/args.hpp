@@ -64,6 +64,7 @@ struct Options {
     // Preferred color wire format; resolved with COLORTERM/TERM at TUI/editor start.
     tui::ColorModePreference color_mode = tui::ColorModePreference::Auto;
     bool tui_highlight = true;
+    int history_max_lines = 500;
     bool allow_private_url_fetch = false;
     bool auto_convert_html_to_markdown = true;
     bool show_thinking_traces = false;
@@ -91,6 +92,7 @@ struct Options {
     // One-shot headless agent goal: -r / --run / --run-file / ainiux run
     bool agent_run = false;
     bool agent_log_enabled = true;
+    int agent_log_keep_sessions = 1;
     bool agent_log_cli_explicit = false;
     // Session-scoped strict A/B control. Never persisted to configuration.
     bool disable_indexing = false;

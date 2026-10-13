@@ -33,6 +33,7 @@ const SettingsFieldSpec kFields[] = {
     {kReasoning, SettingsGroup::Model, SettingsFieldType::Choice, false},
     {"stream", SettingsGroup::Model, SettingsFieldType::Choice, false},
     {"highlight", SettingsGroup::Display, SettingsFieldType::Choice, false},
+    {"history_max_lines", SettingsGroup::Display, SettingsFieldType::Integer, false},
     {"show_thinking_traces", SettingsGroup::Display, SettingsFieldType::Choice, true},
     {"thinking_preview_max_chars", SettingsGroup::Display, SettingsFieldType::Integer, true},
     {"cmd-out", SettingsGroup::Display, SettingsFieldType::Choice, false},
@@ -46,6 +47,7 @@ const SettingsFieldSpec kFields[] = {
 
 bool field_visible(const SettingsFieldSpec& field, SettingsSurface surface) {
     const std::string id = field.id;
+    if (id == "history_max_lines") return surface != SettingsSurface::Editor;
     if (id == "thinking_preview_max_chars" || id == "cmd-out") {
         return surface == SettingsSurface::Agent;
     }
@@ -149,6 +151,7 @@ std::string settings_field_stored_value(const SettingsFieldSpec& field,
     if (id == "highlight") {
         return on_off(options.tui_highlight);
     }
+    if (id == "history_max_lines") return std::to_string(options.history_max_lines);
     if (id == "show_thinking_traces") {
         return options.has_show_thinking_traces ? on_off(options.show_thinking_traces) : "";
     }
@@ -240,6 +243,7 @@ std::string settings_field_constraint_hint(const SettingsFieldSpec& field,
     if (id == "thinking_preview_max_chars") {
         return "0–1000";
     }
+    if (id == "history_max_lines") return "1–10000";
     if (id == "tab-width") {
         return "1–32";
     }

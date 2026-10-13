@@ -43,8 +43,8 @@ SessionRuntimeOptions make_session_runtime_options(
     options.interactive = interactive;
     options.enable_session_db = true;
     options.enable_agent_log = context.options.agent_log_enabled;
-    options.security_review_log_keep_runs =
-        context.options.security_review_log_keep_runs;
+    options.agent_log_keep_sessions = context.options.agent_log_keep_sessions;
+    options.history_max_lines = context.options.history_max_lines;
     options.trusted_prompt_dir = context.options.trusted_prompt_dir;
     options.max_source_code_file_size =
         context.options.max_source_code_file_size;
@@ -435,6 +435,7 @@ Error AgentSessionRuntime::persist_session_statistics() {
 Error AgentSessionRuntime::update_project_settings(
     const provider::RequestContext& context) {
     if (!prepared_) return {ErrorCode::Internal, "agent runtime is not prepared"};
+    options_.history_max_lines = context.options.history_max_lines;
     if (!session_store_.is_open()) return ok_error();
 
     // Provider selection may change before the first turn. No conversation has
@@ -1327,14 +1328,8 @@ void AgentSessionRuntime::reset() {
     mcp_bridge_.reset();
     if (mcp_manager_) mcp_manager_->close_all();
     mcp_manager_.reset();
-    if (session_id_ > 0 && session_store_.is_open()) {
-        // Best-effort close of a still-running session when the runtime is torn down.
-        (void)session_store_.finish_session(session_id_, "cancelled", "", "Cancelled",
-                                            "agent session closed",
-                                            static_cast<long long>(session_turns_),
-                                            static_cast<long long>(session_tool_calls_));
-    }
-    logger_.reset();
+    // Finalize diagnostics even when preparation never created a DB session.
+    (void)finish_session("cancelled", "", "Cancelled", "agent session closed");
     session_store_.close();
     tools_ = ReadToolRegistry{};
     prompts_ = TrustedPrompts{};
@@ -1407,7 +1402,7 @@ Error AgentSessionRuntime::prepare(const provider::RequestContext& context,
     if (options_.enable_agent_log) {
         Error log_error;
         logger_ = ReviewLogger::create(
-            options_.workspace, options_.security_review_log_keep_runs, secrets_,
+            options_.workspace, options_.agent_log_keep_sessions, secrets_,
             [quiet](const std::string& warning) {
                 if (!quiet) std::cerr << warning << "\n";
             },
@@ -1821,15 +1816,28 @@ Error AgentSessionRuntime::load_display_messages(std::vector<provider::Message>&
     out.clear();
     if (!prepared_ || !session_store_.is_open()) return ok_error();
     std::vector<AgentMessageRecord> rows;
-    Error error = session_store_.load_messages(rows);
+    const std::size_t cols = terminal_column_count();
+    const int limit = std::max(1, std::min(10000, options_.history_max_lines));
+    const size_t content_bytes = static_cast<size_t>(std::min(
+        16ULL * 1024ULL * 1024ULL,
+        static_cast<unsigned long long>(limit) * std::max(size_t{8}, cols) * 16ULL));
+    const long long hidden_through = display_min_seq_.load(std::memory_order_relaxed);
+    Error error = session_store_.load_display_tail(
+        rows, limit, std::max(context_reset_after_seq_, hidden_through), content_bytes);
     if (!error.ok()) return error;
     // Lane-clean boundaries affect only model context. The durable transcript
     // remains visible; `/compact all` retains its historical display cut.
     rows = messages_after_seq(rows, context_reset_after_seq_);
-    const long long hidden_through =
-        display_min_seq_.load(std::memory_order_relaxed);
     out.reserve(rows.size());
-    const std::size_t cols = terminal_column_count();
+    long long preceding_user_ms = 0;
+    if (!rows.empty()) {
+        long long created_at = 0;
+        bool found = false;
+        error = session_store_.load_latest_user_created_at_before(
+            rows.front().seq, context_reset_after_seq_, created_at, found);
+        if (!error.ok()) return error;
+        if (found) preceding_user_ms = normalize_timestamp_ms(created_at);
+    }
     for (const AgentMessageRecord& row : rows) {
         if (hidden_through > 0 && row.seq <= hidden_through) continue;
         // Summary rows contain the internal model checkpoint, potentially with
@@ -1851,6 +1859,8 @@ Error AgentSessionRuntime::load_display_messages(std::vector<provider::Message>&
             message.content = row.content;
         }
         message.created_at_ms = normalize_timestamp_ms(row.created_at);
+        if (message.role == "user") preceding_user_ms = message.created_at_ms;
+        message.agent_turn_started_ms = preceding_user_ms;
         // Collapse consecutive identical notices so repeated prepare runs (for
         // example "Code indexing is off…") do not stack in the Agent history.
         if (message.role == "notice" && !out.empty() &&
@@ -2434,8 +2444,8 @@ Error AgentSessionRuntime::finish_session(const std::string& status,
                                           const std::string& error_code,
                                           const std::string& error_message) {
     runtime::kill_all_background_processes();
-    if (!session_store_.is_open() || session_id_ <= 0) return ok_error();
-    Error error = session_store_.finish_session(
+    Error error;
+    if (session_store_.is_open() && session_id_ > 0) error = session_store_.finish_session(
         session_id_, status, redact_secrets(final_text, secrets_), error_code,
         redact_secrets(error_message, secrets_), static_cast<long long>(session_turns_),
         static_cast<long long>(session_tool_calls_));

@@ -2599,6 +2599,10 @@ Error apply_document(const Document& document, cli::Options& options, bool user_
         } else if (name == "agent.security_review_log_enabled") {
             err = require_type(entry, Value::Type::Boolean);
             if (err.ok()) candidate.security_review_log_enabled = entry.value.boolean;
+        } else if (name == "agent.log_keep_sessions") {
+            err = nonnegative_int(entry, candidate.agent_log_keep_sessions);
+            if (err.ok() && candidate.agent_log_keep_sessions > 1000)
+                err = schema_error(entry, "agent.log_keep_sessions expects 0 through 1000");
         } else if (name == "agent.security_review_log_keep_runs") {
             err = nonnegative_int(entry, candidate.security_review_log_keep_runs);
             if (err.ok() && candidate.security_review_log_keep_runs > 1000)
@@ -2856,6 +2860,10 @@ Error apply_document(const Document& document, cli::Options& options, bool user_
             }
         } else if (name == "tui.highlight") {
             err = auto_save_mode(entry, candidate.tui_highlight);
+        } else if (name == "tui.history_max_lines") {
+            err = nonnegative_int(entry, candidate.history_max_lines);
+            if (err.ok() && (candidate.history_max_lines < 1 || candidate.history_max_lines > 10000))
+                err = schema_error(entry, "tui.history_max_lines expects 1 through 10000");
         } else if (name == "tui.theme") {
             if (entry.value.is_boolean() && !entry.value.boolean) {
                 candidate.no_colors = true;

@@ -103,6 +103,9 @@ struct Message {
     // Optional wall-clock timestamp in milliseconds since Unix epoch. Used for
     // UI elapsed-time display (agent transcript); never serialized to providers.
     long long created_at_ms = 0;
+    // Display-only Agent timing when the preceding prompt is outside the
+    // bounded history projection. Never serialized to providers.
+    long long agent_turn_started_ms = 0;
 
     Message() = default;
     Message(std::string message_role,

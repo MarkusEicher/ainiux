@@ -452,9 +452,35 @@ void test_incompatible_schema_is_rejected_without_mutation() {
     fs::remove_all(workspace, ec);
 }
 
+void test_display_tail_is_bounded_and_chronological() {
+    const std::string workspace = temp_workspace("display-tail");
+    agent::AgentSessionStore store;
+    check(store.open(workspace).ok(), "open bounded display store");
+    for (int i = 0; i < 30; ++i)
+        check(store.append_message("user", "message " + std::to_string(i)).ok(), "append display row");
+    check(store.append_message("summary", "internal summary").ok(), "append hidden summary");
+    check(store.append_message("assistant", std::string(5000, 'x') + u8"終わり").ok(), "append long display row");
+    std::vector<agent::AgentMessageRecord> rows;
+    check(store.load_display_tail(rows, 3, 0, 128).ok() && rows.size() == 3 &&
+              rows.front().content == "message 28" && rows.back().content.size() <= 128 &&
+              rows.back().content.find(u8"終わり") != std::string::npos,
+          "display query returns newest visible rows, bounded content, chronological order");
+    std::vector<agent::AgentMessageRecord> full;
+    check(store.load_messages(full).ok() && full.size() == 32 && full.back().content.size() > 5000,
+          "display query preserves complete model transcript");
+    check(store.load_display_tail(rows, 1, 0, 0).ok() && rows.size() == 1 && rows.back().content.size() <= 1,
+          "zero byte budget cannot accidentally request an unbounded SQLite substr");
+    check(store.load_display_tail(rows, 3, full.back().seq, 128).ok() && rows.empty(),
+          "display query respects clear/reset boundary");
+    store.close();
+    std::error_code ec;
+    fs::remove_all(workspace, ec);
+}
+
 }  // namespace
 
 void run_all() {
+    test_display_tail_is_bounded_and_chronological();
     test_open_singleton_append_compact_load();
     test_restore_does_not_create_new_project_state();
     test_record_and_load_approvals();

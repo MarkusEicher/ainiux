@@ -10,6 +10,7 @@ namespace {
 bool exposed(const chat::SettingsFieldSpec& field) {
     return field.group == chat::SettingsGroup::Model ||
            std::string(field.id) == "context_tokens" ||
+           std::string(field.id) == "history_max_lines" ||
            std::string(field.id) == "auto_convert_html_to_md";
 }
 }

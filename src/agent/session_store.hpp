@@ -118,6 +118,9 @@ class AgentSessionStore {
     void set_active_turn(long long turn) { active_turn_ = turn < 0 ? 0 : turn; }
 
     Error load_messages(std::vector<AgentMessageRecord>& messages, int limit = 0) const;
+    // Bounded display projection, independent of the complete model transcript.
+    Error load_display_tail(std::vector<AgentMessageRecord>& messages, int limit,
+                            long long after, size_t content_bytes) const;
     Error load_message_page(std::vector<AgentMessageRecord>& messages, long long before,
                             int limit = 100, long long after = 0) const;
 

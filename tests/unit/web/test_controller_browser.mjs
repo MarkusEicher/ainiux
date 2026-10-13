@@ -87,7 +87,7 @@ test("web controller selectors, per-thread saves, workspace settings and history
   const assets = new Map();
   const index = await readFile(new URL("../../../src/web/index.html", import.meta.url), "utf8");
   assets.set("/ui/", ["text/html", index]);
-  for (const name of ["app-v38.js", "selector-v3.js", "highlight-v5.js", "syntax-v4.js", "image-options-v1.js", "video-options-v3.js", "editor-history-v2.js", "editor-indentation-v1.js", "app-v28.css"]) {
+  for (const name of ["app-v38.js", "history-window-v1.js", "selector-v3.js", "highlight-v5.js", "syntax-v4.js", "image-options-v1.js", "video-options-v3.js", "editor-history-v2.js", "editor-indentation-v1.js", "app-v28.css"]) {
     assets.set(`/ui/assets/${name}`, [name.endsWith("css") ? "text/css" : "text/javascript",
       await readFile(new URL(`../../../src/web/${name.endsWith("css") ? "css" : "js"}/${name}`, import.meta.url))]);
   }
@@ -788,8 +788,15 @@ test("web controller selectors, per-thread saves, workspace settings and history
     await evaluate(`{ const input = document.querySelector("#chat-input");
       for (let i = 0; i < 155; ++i) { input.value = "/theme blue";
         document.querySelector("#chat-form").requestSubmit(); } }`);
+    const initialNoticeCount = await evaluate('document.querySelectorAll("#chat-messages .browser-notice").length');
+    assert.ok(initialNoticeCount > 0 && initialNoticeCount < 150,
+      "chat initially renders a viewport instead of all retained browser notices");
+    for (let i = 0; i < 20; ++i) {
+      if (!(await evaluate('Boolean(document.querySelector("#chat-messages > button"))'))) break;
+      await click("#chat-messages > button");
+    }
     assert.equal(await evaluate('document.querySelectorAll("#chat-messages .browser-notice").length'), 150,
-      "chat retains only the newest 150 browser notices");
+      "older notices load on demand within the 500-line display budget");
     const jobsBeforeRegenerate = chatJobs.length;
     await click("#chat-regenerate-button");
     await wait('!document.querySelector("#chat-messages").textContent.includes("Usage: /theme light or /theme dark")');

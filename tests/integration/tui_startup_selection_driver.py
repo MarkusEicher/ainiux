@@ -90,8 +90,8 @@ def check_missing_provider(binary, mode, model=None):
     if model is not None:
         args.extend(["--model", model])
     # Chat opens the thread selector first (Ctrl+L UI); Tab starts a new thread
-    # and then the provider picker. Agent still opens the provider picker first.
-    actions = [("\x11", 0.3)]
+    # and then the provider picker. Agent offers indexing before provider setup.
+    actions = [("n", 0.5), ("\x11", 0.3)]
     if mode == "--chat":
         actions = [("\t", 0.5), ("\x11", 0.3)]
     output = run_case(
@@ -105,6 +105,11 @@ def check_missing_provider(binary, mode, model=None):
         context += " even though a model name was supplied"
     if mode == "--chat":
         require(output, "Newest first", "showing chat startup thread selector")
+    if mode == "--agent":
+        require(output, "Build code index", "offering indexing before provider selection")
+        rendered = plain(output)
+        if rendered.index("Build code index") > rendered.index("── Provider"):
+            raise RuntimeError("agent provider selection preceded the indexing offer")
     require(output, "── Provider", context)
     require(output, "openai", "showing providers during required startup setup")
 
@@ -128,6 +133,8 @@ def check_multiple_model_surface(binary, base_url, model, mode):
         ("\r", 0.6),
         ("\x11", 0.3),
     ]
+    if mode == "--agent":
+        actions.insert(0, ("n", 0.5))
     if mode == "--chat":
         actions = [
             ("\t", 0.5),
@@ -180,7 +187,7 @@ def check_agent_permission_persistence(binary, base_url):
         """Start agent TUI, decline optional index offer, wait until idle ready."""
         master, slave = open_wide_pty()
         process = subprocess.Popen(
-            [binary, base_url, "--quiet", "--agent"],
+            [binary, base_url, "--quiet", "--agent", "--disable-indexing", "--model", "mock-model"],
             stdin=slave,
             stdout=slave,
             stderr=slave,
@@ -281,6 +288,57 @@ def check_agent_permission_persistence(binary, base_url):
         process, master, output = launch_and_idle()
         restored = finish(process, master, output, [("/quit\r", 0.8)])
         require(restored, "yolo", "restoring persisted agent permissions")
+        logs = os.listdir(os.path.join(workspace, ".ainiux-pr", "logs", "agent"))
+        if len([name for name in logs if name.endswith(".jsonl")]) != 1 or any(name.endswith(".partial") for name in logs):
+            raise RuntimeError(f"/quit failed one-session log finalization: {logs!r}")
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
+def check_incomplete_saved_provider_and_log_retention(binary):
+    workspace = tempfile.mkdtemp(prefix="ainiux-agent-incomplete-")
+    env = os.environ.copy()
+    env["HOME"] = workspace
+    env["XDG_CONFIG_HOME"] = os.path.join(workspace, "config")
+    env["TERM"] = "xterm-256color"
+
+    def launch():
+        master, slave = open_wide_pty()
+        process = subprocess.Popen(
+            [binary, "--quiet", "--agent", "--disable-indexing"],
+            stdin=slave, stdout=slave, stderr=slave, close_fds=True, env=env, cwd=workspace)
+        os.close(slave)
+        output = bytearray()
+        try:
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                output.extend(drain(master, 0.2))
+                if "── Provider" in plain(output):
+                    break
+                if process.poll() is not None:
+                    break
+            require(output, "── Provider", "recovering incomplete project selection")
+            output.extend(send(master, "\x11", 0.3))
+            process.wait(timeout=10)
+            if process.returncode != 0:
+                raise RuntimeError(f"incomplete provider startup exited {process.returncode}")
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=2)
+            os.close(master)
+        logs = os.path.join(workspace, ".ainiux-pr", "logs", "agent")
+        names = os.listdir(logs)
+        if len([name for name in names if name.endswith(".jsonl")]) != 1 or any(name.endswith(".partial") for name in names):
+            raise RuntimeError(f"no-turn Ctrl+Q failed one-session finalization: {names!r}")
+
+    try:
+        launch()
+        database = os.path.join(workspace, ".ainiux-pr", "agent.sqlite")
+        with sqlite3.connect(database) as connection:
+            connection.execute("UPDATE project SET provider='custom_openai_chat', base_url='', model='remembered-model', settings_json=? WHERE id=1",
+                ('{"lanes":{"act":{"provider":"custom_openai_chat","base_url":"","model":"remembered-model"}}}',))
+        launch()
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
 
@@ -294,6 +352,7 @@ def main():
     for mode in ("--chat", "--agent"):
         check_missing_provider(binary, mode)
         check_missing_provider(binary, mode, model)
+    check_incomplete_saved_provider_and_log_retention(binary)
     check_single_model_chat(binary, base_url, model)
     for mode in ("--chat", "--agent"):
         check_multiple_model_surface(binary, base_url, model, mode)

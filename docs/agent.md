@@ -25,7 +25,27 @@ Foreground `run` waits up to **300 seconds** by default (`[agent] run_timeout_se
 
 Agent tool rounds default to a maximum of 500 **model rounds per user prompt** (`[agent] max_turns`, range 1 through 500). The counter resets at each new user prompt. A round with several parallel tools still counts as one, and a final text-only answer also counts as one. Independent `read`/`ls`/`glob`/`grep`/`fetch`/`web_search` calls in one round share a worker pool of 4 threads by default (`[agent] max_parallel_agents`, range 1 through 32); consecutive `run` calls share the same pool with each other. Mutations, index/snapshot tools, `ask`/`attach`/`goal_met`, and MCP stay exclusive so a later read sees a prior edit. There is no cap on how many user prompts a project session may hold; auto-compact bounds request size instead of prompt count. Interactive sessions ask before continuing at the round cap; headless runs stop with a cap error. `read` defaults to 128 KiB per range (maximum 256 KiB), reports `next_start_line` when more lines remain, and bounds displayed lines to 2,000 UTF-8 characters. `grep` supports `offset` pagination and reports `next_offset` when more matches remain.
 
-The first interactive use may offer to build a code index. Declining leaves live filesystem tools available. Use `/new` explicitly for a new agent project; `Tab` and `Insert` do not create one.
+Bare `ainiux -a` needs no preconfigured provider, model, or base URL. Local project
+preparation runs first; if the code index is missing, its Yes/No offer appears
+before provider and model selection. Declining leaves live filesystem tools
+available. Complete saved selections are reused; incomplete saved endpoints return
+to setup. `--disable-indexing` skips the index offer. Use `/new` explicitly for a
+new agent project; `Tab` and `Insert` do not create one.
+
+Terminal and WebUI history initially render one viewport. Scrolling upward loads
+more display rows, up to `history_max_lines` (default 500, range 1–10000). Set
+`[tui] history_max_lines` globally, or change `history_max_lines` in `/setting`
+or browser Settings. This limits display work only: complete transcripts, exports,
+and model context remain available. Oversized individual messages display their
+bounded tail; use export to retrieve the complete message.
+
+Agent diagnostic JSONL logs under `.ainiux-pr/logs/agent/` retain one completed
+session by default (`[agent] log_keep_sessions = 1`, range 0–1000). During use,
+the active log and previous session remain available; `Ctrl+Q` or `/quit` finalizes
+the latest log and prunes older sessions. Editor/dired hops retain the same active
+session. Abandoned crash partials share the retention budget; logs whose processes
+may still be running are preserved. `0` keeps all logs. Transcripts in SQLite and
+file backups are unaffected; security-review log retention stays separate.
 
 `/setting` opens the same grouped settings widget as chat. Agent-only rows include `thinking_preview_max_chars` and `cmd-out`. `s` writes the project settings file; `q` discards the draft.
 

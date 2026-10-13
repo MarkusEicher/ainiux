@@ -2215,6 +2215,8 @@ app::TuiRunResult run(provider::RequestContext context,
     // Offer a one-shot Yes/No to create the project index when prepare finds none.
     // Deferred while provider/model setup pickers are open so the prompt is not lost.
     bool pending_index_build_offer = false;
+    bool agent_startup_pending = context.options.agent;
+    std::function<void()> continue_agent_startup;
     auto open_index_build_offer = [&]() {
         if (!context.options.agent || !agent_runtime ||
             !agent_runtime->prepared())
@@ -2637,8 +2639,7 @@ app::TuiRunResult run(provider::RequestContext context,
             if (agent_controller && agent_controller->turn_running()) {
                 agent_controller->set_status_label("Agent running · reviewing in editor");
             }
-        } else if (context.options.agent && agent_runtime && agent_runtime->prepared() &&
-                   agent_runtime->session_id() > 0) {
+        } else if (context.options.agent && agent_runtime && agent_runtime->prepared()) {
             // Permanent leave (chat / quit handled elsewhere): finish session.
             if (agent_controller) {
                 agent_controller->shutdown(true, "left agent mode");
@@ -3391,23 +3392,24 @@ app::TuiRunResult run(provider::RequestContext context,
         return prompt;
     };
 
-    if (context.options.agent) {
+    continue_agent_startup = [&]() {
+        if (!agent_startup_pending || !agent_runtime || !agent_runtime->prepared() ||
+            file_job.joinable() || pending_index_build_offer || mode != TuiMode::Chat ||
+            active_job != ActiveJob::None) return;
+        agent_startup_pending = false;
         if (provider::tui_needs_startup_provider_selection(context.options)) {
             open_provider_picker(true);
-        } else if (provider::needs_interactive_model_selection(context)) {
+        } else if (!context.profile.offline &&
+                   (provider::needs_interactive_model_selection(context) ||
+                    context.options.model.empty())) {
             start_models(ModelsRequestPurpose::Picker);
-        } else if (!agent_reattach) {
-            // Only the first agent-surface entry may auto-start a CLI prompt.
-            // Reattach after editor/dired must not start a second turn.
+        }
+    };
+    if (context.options.agent) {
+        agent_startup_pending = !agent_reattach;
+        if (!agent_reattach) {
             const std::string startup = consume_startup_agent_prompt();
-            if (!startup.empty()) {
-                if (!agent_runtime || !agent_runtime->prepared()) {
-                    deferred_agent_prompt = startup;
-                } else if (active_job == ActiveJob::None &&
-                           !(agent_controller && agent_controller->turn_running())) {
-                    start_turn(startup);
-                }
-            }
+            if (!startup.empty()) deferred_agent_prompt = startup;
         } else if (interactive != nullptr) {
             // Returning from editor: never re-fire -p, even if options still hold it.
             interactive->agent_startup_prompt_consumed = true;
@@ -3445,6 +3447,7 @@ app::TuiRunResult run(provider::RequestContext context,
     size_t render_frame = 0;
     const auto render_animation_started = std::chrono::steady_clock::now();
     detail::TerminalFrameRenderer terminal_frame_renderer;
+    detail::HistoryRenderCache history_render_cache;
     ActivityKind activity_kind = ActivityKind::None;
     std::vector<tui::StyledLine> settings_overlay = settings_overlay_lines();
     detail::render(session, input, status, history_scroll, show_thinking_traces, mode, visible_panel,
@@ -3452,7 +3455,8 @@ app::TuiRunResult run(provider::RequestContext context,
                    make_render_style(),
                    terminal_frame_renderer, panel_title(), context.options.agent,
                    build_shell_chrome(),
-                   settings_overlay.empty() ? nullptr : &settings_overlay);
+                   settings_overlay.empty() ? nullptr : &settings_overlay,
+                   static_cast<size_t>(context.options.history_max_lines), &history_render_cache);
     while (!quit) {
         credit_jobs.reap_finished();
         process_clipboard_events();
@@ -3492,7 +3496,8 @@ app::TuiRunResult run(provider::RequestContext context,
                         mode == TuiMode::ReasoningList ||
                         mode == TuiMode::ReasoningConfirm ||
                         mode == TuiMode::ModelConfirm ||
-                        mode == TuiMode::Settings;
+                        mode == TuiMode::Settings ||
+                        mode == TuiMode::AgentIndexBuildConfirm;
                     const std::string setup_status = status;
                     if (!preserve_setup_picker) mode = TuiMode::Chat;
                     if (!event.error.ok()) {
@@ -3543,6 +3548,8 @@ app::TuiRunResult run(provider::RequestContext context,
                             open_index_build_offer();
                         }
                     }
+                    if (history_phase && event.error.ok() && !event.agent_index_enabled &&
+                        !context.options.disable_indexing) open_index_build_offer();
                     break;
                 }
                 case TuiEventType::AgentPrepareProgress: {
@@ -4311,7 +4318,10 @@ app::TuiRunResult run(provider::RequestContext context,
         // deferred first-run index offer once the UI is free.
         flush_pending_index_build_offer();
 
+        if (continue_agent_startup) continue_agent_startup();
+
         if (deferred_agent_prompt.has_value() &&
+            !agent_startup_pending &&
             mode == TuiMode::Chat &&
             active_job == ActiveJob::None &&
             !file_job.joinable() &&
@@ -4977,7 +4987,8 @@ app::TuiRunResult run(provider::RequestContext context,
                        make_render_style(),
                        terminal_frame_renderer, panel_title(), context.options.agent,
                        build_shell_chrome(),
-                       settings_overlay.empty() ? nullptr : &settings_overlay);
+                       settings_overlay.empty() ? nullptr : &settings_overlay,
+                   static_cast<size_t>(context.options.history_max_lines), &history_render_cache);
     }
 
     model_job.cancel();
@@ -5052,8 +5063,7 @@ app::TuiRunResult run(provider::RequestContext context,
     if (context.options.agent && agent_controller) {
         agent_controller->shutdown(true, "quit agent mode");
         if (interactive != nullptr) interactive->agent_controller.reset();
-    } else if (context.options.agent && agent_runtime && agent_runtime->prepared() &&
-               agent_runtime->session_id() > 0) {
+    } else if (context.options.agent && agent_runtime && agent_runtime->prepared()) {
         (void)agent_runtime->finish_session("success", "", "", "");
     }
     return {0, app::InteractiveUiTarget::Quit};

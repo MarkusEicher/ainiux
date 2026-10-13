@@ -1,3 +1,4 @@
+import { historyLineLimit, historyWindow } from "./history-window-v1.js";
 import { renderMarkdown } from "./highlight-v5.js";
 import { createSelector } from "./selector-v3.js";
 import { appendHighlightedCode, languageForPath } from "./syntax-v4.js";
@@ -520,31 +521,6 @@ function appendConversationNotice(container, record, cardClass) {
   container.append(card);
 }
 
-function appendChatTimeline(container, transcript, notices, allowPrint = false) {
-  const ordered = [...notices].sort((left, right) => {
-    const leftBoundary = Number.isSafeInteger(left.nextOrdinal)
-      ? left.nextOrdinal : Number.MAX_SAFE_INTEGER;
-    const rightBoundary = Number.isSafeInteger(right.nextOrdinal)
-      ? right.nextOrdinal : Number.MAX_SAFE_INTEGER;
-    return leftBoundary - rightBoundary || left.id - right.id;
-  });
-  const last = transcript[transcript.length - 1];
-  const printOrdinal = allowPrint && last && last.role === "assistant" ? last.ordinal : null;
-  let noticeIndex = 0;
-  for (const message of transcript) {
-    const ordinal = Number(message.ordinal);
-    while (noticeIndex < ordered.length && Number.isSafeInteger(ordinal) &&
-           Number.isSafeInteger(ordered[noticeIndex].nextOrdinal) &&
-           ordered[noticeIndex].nextOrdinal <= ordinal) {
-      appendConversationNotice(container, ordered[noticeIndex++], "message");
-    }
-    appendChatMessage(container, message.role, message.content, false, message.ordinal,
-      message.attachments, Number(message.ordinal) === Number(printOrdinal));
-  }
-  while (noticeIndex < ordered.length) {
-    appendConversationNotice(container, ordered[noticeIndex++], "message");
-  }
-}
 
 function renderSurfaceNotice(panelId) {
   const areaId = SURFACE_NOTICE_IDS.get(panelId);
@@ -2528,7 +2504,7 @@ function appendChatMessage(container, role, content, streaming = false, ordinal 
       if (role === "assistant") {
         const edit = element("button", "", "Edit");
         edit.type = "button";
-        edit.addEventListener("click", () => startChatMessageEdit(ordinal, content));
+        edit.addEventListener("click", () => startChatMessageEdit(ordinal, state.thread?.messages?.find((message) => message.ordinal === ordinal)?.content ?? content));
         actions.append(edit);
       }
       const remove = element("button", "delete", "Delete");
@@ -2556,10 +2532,83 @@ function updateVisibleChatStream(context) {
       return;
     }
     const output = card.querySelector(".message-content");
-    if (output) renderChatContent(output, "assistant", pending.streamText, true);
+    const view = historyViews.get("chat");
+    const tail = historyWindow([{ content: pending.streamText }], view?.budget || 24, view?.columns || 80);
+    if (output) renderChatContent(output, "assistant", tail.visible[0]?.text || "", true);
     const messages = byId("chat-messages");
     messages.scrollTop = messages.scrollHeight;
   });
+}
+
+// Each surface starts with one viewport, then grows only on an older-history
+// gesture. The budget remains bounded independently of stored transcript size.
+const historyViews = new Map();
+function historyView(surface, container, identity, settings) {
+  const limit = historyLineLimit(settings?.history_max_lines);
+  const style = getComputedStyle(container);
+  const fontSize = Number.parseFloat(style.fontSize) || 14;
+  const lineHeight = Number.parseFloat(style.lineHeight) || fontSize * 1.45;
+  const screenRows = Math.max(1, Math.ceil((container.clientHeight || 480) / lineHeight));
+  let view = historyViews.get(surface);
+  if (!view || view.identity !== identity) {
+    view = { identity, budget: Math.min(limit, screenRows), loading: false };
+    historyViews.set(surface, view);
+  }
+  view.limit = limit;
+  view.screenRows = screenRows;
+  view.budget = Math.min(limit, Math.max(view.budget, Math.min(limit, screenRows)));
+  view.columns = Math.max(8, Math.floor((container.clientWidth - 36) / (fontSize * 0.6)));
+  return view;
+}
+
+async function expandHistory(surface) {
+  const view = historyViews.get(surface);
+  const container = byId(surface === "chat" ? "chat-messages" : "agent-events");
+  if (!view || view.loading || !view.hasOlder || view.budget >= view.limit) return;
+  const oldHeight = container.scrollHeight;
+  const oldTop = container.scrollTop;
+  view.budget = Math.min(view.limit, view.budget + view.screenRows);
+  view.loading = true;
+  try {
+    if (surface === "agent") {
+      const history = state.agentHistory.get(state.session?.id);
+      if (history?.before && (history.messages?.length || 0) < view.budget)
+        await loadAgentHistory(state.session.id, history.before);
+      renderAgent();
+    } else renderChat();
+    container.scrollTop = oldTop + Math.max(0, container.scrollHeight - oldHeight);
+  } finally { view.loading = false; }
+}
+
+function olderHistoryButton(container, surface, view) {
+  if (!view.hasOlder || view.budget >= view.limit) return;
+  const older = element("button", "ghost", "Load older messages");
+  older.type = "button";
+  older.addEventListener("click", () => void expandHistory(surface));
+  container.append(older);
+}
+
+function bindHistoryViewports() {
+  for (const surface of ["chat", "agent"]) {
+    const container = byId(surface === "chat" ? "chat-messages" : "agent-events");
+    container.addEventListener("scroll", () => {
+      if (container.scrollTop <= 24 && container.scrollHeight > container.clientHeight + 24)
+        void expandHistory(surface);
+    }, { passive: true });
+    container.addEventListener("wheel", (event) => {
+      if (event.deltaY < 0 && container.scrollTop <= 24) void expandHistory(surface);
+    }, { passive: true });
+    container.addEventListener("keydown", (event) => {
+      if (["PageUp", "Home"].includes(event.key) && container.scrollTop <= 24)
+        void expandHistory(surface);
+    });
+  }
+  const observer = new ResizeObserver(() => {
+    if (state.thread) renderChat();
+    if (state.session) renderAgent();
+  });
+  observer.observe(byId("chat-messages"));
+  observer.observe(byId("agent-events"));
 }
 
 function renderChat() {
@@ -2595,10 +2644,28 @@ function renderChat() {
   const notices = state.chatNotices.get(state.thread.id) || [];
   if (!transcript.length && !stream && !notices.length) setEmpty(messages, "This thread is empty.");
   else {
+    const followTail = messages.classList.contains("empty-state") ||
+      messages.scrollHeight - messages.scrollTop - messages.clientHeight <= 40;
+    const previousTop = messages.scrollTop;
+    const view = historyView("chat", messages, state.thread.id, state.thread.settings);
+    const candidates = transcript.slice(-view.limit).map((message) => ({ kind: "message", message,
+      content: message.content, ordinal: Number(message.ordinal) }));
+    for (const notice of notices.slice(-view.limit)) candidates.push({ kind: "notice", notice,
+      content: notice.message, ordinal: Number.isSafeInteger(notice.nextOrdinal) ? notice.nextOrdinal - 0.5 : Infinity });
+    candidates.sort((left, right) => left.ordinal - right.ordinal);
+    if (stream) candidates.push({ kind: "stream", content: stream.streamText });
+    const projection = historyWindow(candidates, view.budget, view.columns);
+    view.hasOlder = projection.hasOlder || transcript.length > view.limit;
     clear(messages);
-    appendChatTimeline(messages, transcript, notices, !stream);
-    if (stream) appendChatMessage(messages, "assistant", stream.streamText, true);
-    messages.scrollTop = messages.scrollHeight;
+    olderHistoryButton(messages, "chat", view);
+    const last = transcript[transcript.length - 1];
+    for (const { entry, text } of projection.visible) {
+      if (entry.kind === "notice") appendConversationNotice(messages, { ...entry.notice, message: text }, "message");
+      else if (entry.kind === "stream") appendChatMessage(messages, "assistant", text, true);
+      else appendChatMessage(messages, entry.message.role, text, false, entry.message.ordinal,
+        entry.message.attachments, !stream && entry.message === last && last.role === "assistant");
+    }
+    messages.scrollTop = followTail ? messages.scrollHeight : previousTop;
   }
   const readOnly = state.thread.read_only === true;
   if (readOnly) byId("thread-meta").textContent += " · read-only";
@@ -3400,12 +3467,12 @@ function formatTaskComplete(value) {
   return `${text}.`;
 }
 
-function appendAgentEvent(container, entry, live = false) {
+function appendAgentEvent(container, entry, live = false, projectedText = null) {
   const display = agentEventDisplay(entry, live);
   const failedTool = display.kind === "tool" && /\b(?:error|failed|denied)\b/i.test(display.text);
   const card = element("article", `event-card ${display.kind}${failedTool ? " failed" : ""}${live ? " streaming" : ""}`);
   card.append(element("div", "event-type", display.label));
-  const text = display.text;
+  const text = projectedText ?? display.text;
   if (text && text !== "{}") {
     if (["user", "assistant", "response"].includes(display.kind)) {
       const output = element("div", "message-content");
@@ -3534,19 +3601,22 @@ function renderAgent() {
   }
   else {
     clear(events);
-    if (history?.before) {
-      const older = element("button", "ghost", "Load older messages"); older.type = "button";
-      older.addEventListener("click", () => void loadAgentHistory(session.id, history.before)); events.append(older);
-    }
-    for (const message of history?.messages || []) appendAgentEvent(events, {
-      type: message.role,
-      data: { content: message.content, task_elapsed_ms: message.task_elapsed_ms },
+    const view = historyView("agent", events, session.id, session.settings);
+    const candidates = [];
+    for (const message of (history?.messages || []).slice(-view.limit)) candidates.push({
+      entry: { type: message.role, data: { content: message.content, task_elapsed_ms: message.task_elapsed_ms } },
     });
-    for (const entry of logs) {
-      appendAgentEvent(events, entry);
+    for (const entry of logs.slice(-view.limit)) candidates.push({ entry });
+    if (activities) for (const entry of activities.values()) candidates.push({ entry, live: true });
+    for (const notice of notices.slice(-view.limit)) candidates.push({ notice });
+    const projection = historyWindow(candidates, view.budget, view.columns,
+      (item) => item.notice ? item.notice.message : agentEventDisplay(item.entry, item.live).text);
+    view.hasOlder = projection.hasOlder || Boolean(history?.before);
+    olderHistoryButton(events, "agent", view);
+    for (const { entry: item, text } of projection.visible) {
+      if (item.notice) appendConversationNotice(events, { ...item.notice, message: text }, "event-card");
+      else appendAgentEvent(events, item.entry, item.live, text);
     }
-    if (activities) for (const entry of activities.values()) appendAgentEvent(events, entry, true);
-    for (const notice of notices) appendConversationNotice(events, notice, "event-card");
     events.scrollTop = followTail ? events.scrollHeight : previousScrollTop;
   }
   const ready = session.status === "ready" && !session.turn_id;
@@ -3571,7 +3641,7 @@ async function loadAgentHistory(sessionId, before = 0) {
     const rows = before ? [...response.messages, ...(previous?.messages || [])] : response.messages;
     const bySeq = new Map(rows.map((row) => [row.seq, row]));
     state.agentHistory.set(sessionId, {
-      messages: [...bySeq.values()].sort((a, b) => a.seq - b.seq), before: response.before,
+      messages: [...bySeq.values()].sort((a, b) => a.seq - b.seq).slice(-historyLineLimit(state.session.settings?.history_max_lines)), before: response.before,
     });
     if (!before) {
       const live = (state.agentLogs.get(sessionId) || []).filter((event) => response.turn_id && event.turn_id === response.turn_id);
@@ -5370,6 +5440,7 @@ function bindEvents() {
 
 async function boot() {
   bindEvents();
+  bindHistoryViewports();
   state.showThinkingTraces = storageGet(THINKING_STORAGE_KEY) === "show";
   const theme = storageGet(THEME_STORAGE_KEY);
   if (["auto", "dark", "light"].includes(theme)) {

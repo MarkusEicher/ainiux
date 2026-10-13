@@ -604,6 +604,16 @@ void test_chat_session_file_failures_and_unicode() {
 
 void test_chat_settings_helpers() {
     ainiux::cli::Options options;
+    check(options.history_max_lines == 500, "history display defaults to 500 rows");
+    check(ainiux::chat::apply_chat_setting(options, "history_max_lines", "750").ok() &&
+              options.history_max_lines == 750, "history display limit is configurable");
+    for (const std::string value : {"0", "-1", "10001", "99999999999999999999", "1.5", ""})
+        check(!ainiux::chat::apply_chat_setting(options, "history_max_lines", value).ok(),
+              "invalid history limit is rejected: " + value);
+    ainiux::cli::Options restored;
+    check(ainiux::chat::apply_settings_json(restored, ainiux::chat::settings_json_from_options(options)).ok() &&
+              restored.history_max_lines == 750, "history limit survives settings persistence");
+
     ainiux::Error err = ainiux::chat::apply_chat_setting(options, "temperature", "0.9");
     check(err.ok() && options.has_temperature && options.temperature == 0.9,
           "chat setting parser applies temperature");

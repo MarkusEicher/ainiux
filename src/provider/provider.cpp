@@ -2602,6 +2602,17 @@ bool editor_has_configured_model_endpoint(const cli::Options& options) {
 bool tui_needs_startup_provider_selection(const cli::Options& options) {
     // Shared by full-screen Chat and interactive Agent (same provider picker UX).
     const bool fullscreen_interactive = options.tui || options.agent;
+    if (options.agent && options.agent_project_settings_restored &&
+        !options.provider_explicit && options.positional_url.empty() &&
+        !options.base_url_cli_explicit && !options.chat_url_cli_explicit &&
+        !options.models_url_cli_explicit && !options.responses_url_cli_explicit) {
+        // Restoring a lane is not proof that it has a usable endpoint. Older
+        // project records can remember a custom provider without its base URL.
+        Profile profile;
+        if (!find_profile(options.provider, profile) || profile.offline ||
+            (profile.base_url.empty() && options.base_url.empty() &&
+             options.chat_url.empty() && options.responses_url.empty())) return true;
+    }
     return fullscreen_interactive && !options.agent_project_settings_restored &&
            !options.provider_explicit && options.positional_url.empty() &&
            options.base_url.empty() && options.chat_url.empty() && options.models_url.empty() &&
@@ -2648,6 +2659,14 @@ void apply_tui_startup_default(cli::Options& options) {
         return;
     }
     options.provider = "none";
+    // Discard incomplete inherited targets only in the local bootstrap context;
+    // provider selection builds a fresh endpoint using the normal shared path.
+    if (options.agent && options.agent_project_settings_restored) {
+        options.base_url.clear();
+        options.chat_url.clear();
+        options.models_url.clear();
+        options.responses_url.clear();
+    }
 }
 
 bool editor_needs_local_only_default(const cli::Options& options) {

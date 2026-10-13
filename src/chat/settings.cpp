@@ -243,6 +243,18 @@ Error apply_chat_setting(cli::Options& options, const std::string& raw_name, con
         }
         return ok_error();
     }
+    if (name == "history_max_lines") {
+        int parsed = 0;
+        for (char ch : value) {
+            if (ch < '0' || ch > '9' || parsed > 10000)
+                return invalid_setting_value(name, "expected an integer from 1 through 10000");
+            parsed = parsed * 10 + ch - '0';
+        }
+        if (parsed < 1 || parsed > 10000)
+            return invalid_setting_value(name, "expected an integer from 1 through 10000");
+        options.history_max_lines = parsed;
+        return ok_error();
+    }
     if (name == "thinking_preview_max_chars") {
         long long parsed = 0;
         if (value.empty()) {
@@ -450,6 +462,7 @@ std::string settings_json_from_options(const cli::Options& options) {
     append_optional_int(out, first, "thinking_preview_max_chars",
                         options.has_agent_thinking_preview_max_chars,
                         options.agent_thinking_preview_max_chars);
+    append_json_int(out, first, "history_max_lines", options.history_max_lines);
     append_json_bool(out, first, "auto_convert_html_to_md", options.auto_convert_html_to_markdown);
     out << '}';
     return out.str();
@@ -628,6 +641,12 @@ Error apply_settings_json(cli::Options& options, const std::string& settings_jso
             options.has_context_tokens = true;
         }
     }
+    if (const json::Value* lines = root.get("history_max_lines")) {
+        if (lines->type != json::Value::Type::Number || !std::isfinite(lines->number) ||
+            std::floor(lines->number) != lines->number || lines->number < 1 || lines->number > 10000)
+            return {ErrorCode::Config, "history_max_lines must be an integer from 1 through 10000"};
+        options.history_max_lines = static_cast<int>(lines->number);
+    }
     if (const json::Value* preview = root.get("thinking_preview_max_chars")) {
         if (preview->is_null()) {
             // Global [tui] fallback remains active.
@@ -661,6 +680,7 @@ std::string format_settings_panel(const cli::Options& options,
     out << "/setting (open settings)\n";
     auto append = [&](const char* name, const std::string& value) { out << name << '=' << value << '\n'; };
     append("stream", options.stream_explicit ? (options.stream ? "on" : "off") : "");
+    append("history_max_lines", std::to_string(options.history_max_lines));
     append("temperature", options.has_temperature ? std::to_string(options.temperature) : "");
     append("top_p", options.has_top_p ? std::to_string(options.top_p) : "");
     append("top_k", options.has_top_k ? std::to_string(options.top_k) : "");

@@ -24,6 +24,14 @@ A thread with missing managed media stays readable but becomes read-only. `/clea
 
 ## Input and history
 
+Terminal and WebUI Chat render one viewport initially and load more display rows
+when scrolling upward, up to `history_max_lines` (500 by default, range 1–10000).
+Use `[tui] history_max_lines` in config, `/setting history_max_lines=750`, or
+browser Settings. The display cache is bounded; full transcripts and exports
+remain intact. Very large messages display a bounded tail. Browser rows use a
+conservative wrapped-text estimate including message labels, and offer a
+**Load older messages** button alongside scrolling.
+
 `Enter` or `Ctrl+S` sends. `Esc` then `Enter` inserts a newline. The shared editor input supports grapheme-aware navigation, selection, copy/paste, undo/redo, soft wrapping, and syntax highlighting. History prose wraps on word boundaries so a long sentence does not split mid-word; Markdown fenced code keeps column wrap. Up on the first visual line and Down on the last visual line recall earlier user prompts from the current thread, including prompts loaded from the chat library. Agent-mode prompts are not mixed into chat recall.
 
 `/clear` in chat deletes the thread messages and restores the system prompt. In agent mode the same command only hides the visible window and does not change model context.

@@ -318,7 +318,8 @@ void test_embedded_web_ui_assets_and_browser_security() {
               javascript.body.find("function agentNotice") != std::string::npos &&
               javascript.body.find("function surfaceNotice") != std::string::npos &&
               javascript.body.find("function clearTransientNotices") != std::string::npos &&
-              javascript.body.find("function appendChatTimeline") != std::string::npos &&
+              javascript.body.find("function historyView") != std::string::npos &&
+              javascript.body.find("function expandHistory") != std::string::npos &&
               javascript.body.find("function pruneChatNoticesFrom") != std::string::npos &&
               javascript.body.find("function formatConversionNotice") != std::string::npos &&
               javascript.body.find("async function fetchChatUrl") != std::string::npos &&
@@ -400,6 +401,16 @@ void test_embedded_web_ui_assets_and_browser_security() {
               javascript_headers.find("X-Frame-Options: DENY") != std::string::npos &&
               javascript_headers.find("Cache-Control: no-store") != std::string::npos,
           "embedded WUI JavaScript uses authenticated fetch/replay and hardened same-origin headers");
+
+    Response history_window = route_request(public_get("/ui/assets/history-window-v1.js"), config, status);
+    const std::string history_window_headers = serialize_response(history_window, true);
+    check(history_window.status == 200 &&
+              history_window.content_type == "text/javascript; charset=utf-8" &&
+              history_window.body.find("export function historyWindow") != std::string::npos &&
+              history_window.body.find("innerHTML") == std::string::npos &&
+              history_window_headers.find("Cache-Control: no-store") != std::string::npos &&
+              history_window_headers.find("script-src 'self'") != std::string::npos,
+          "bounded history module is available through an exact hardened embedded asset route");
 
     Response editor_history = route_request(public_get("/ui/assets/editor-history-v2.js"), config, status);
     const std::string editor_history_headers = serialize_response(editor_history, true);

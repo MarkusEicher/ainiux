@@ -312,6 +312,31 @@ The standalone editor provides local, offline text transforms for reflow and lin
 
 ## Chat/agent history display alignment
 
+History display is independent of durable transcript and request compaction.
+Terminal and WebUI start with a viewport, expand on demand, and stop at
+`history_max_lines` (500 by default). Formatting must bound source text before
+Markdown/table/highlight work, including a single giant message. Terminal caches
+only the retained projection, with content, width, thinking/highlight flags and
+activity invalidation; typing does not reformat unchanged history. Agent display
+loads only a bounded chronological tail from SQLite. Browser uses bounded text
+row estimates including card labels; full message actions still use original
+ordinals/content. No transcript schema migration or destructive history trimming
+is needed.
+
+Interactive Agent bootstrap is local and endpoint-independent. Missing-index
+consent precedes provider/model selection, and readiness depends on usable values,
+not the mere presence of restored lane settings. Configured headless operations
+continue to validate endpoints before requests.
+
+Agent diagnostics have their own `[agent] log_keep_sessions` (default 1), separate
+from review logs. Keep the active log plus the most recent completed session, then
+retain only the latest completed session after exit. Graceful shutdown finalizes
+logs even with no model turn or failed preparation. Recognized abandoned agent
+partials participate in retention; conservative process-liveness checks preserve
+active/uncertain owners. Pruning never follows links, deletes unrelated files,
+changes transcript/context, or removes file backups. Failed publication preserves
+the prior log and partial evidence. Setting 0 keeps all diagnostics.
+
 Chat and interactive agent TUI history deliberately **omit** `/width` and left/right/center/justify prose reflow. Those commands stay **editor-only** (`src/editor/text_layout.*` / minibuffer) so chat and agent transcripts are not mangled by incomplete history layout. History display uses terminal soft wrap only; pretty Markdown tables are capped to the history content column via `pretty_format_tables(..., max_width)`. SQLite and JSON transcripts remain raw.
 
 ## Pretty tables for human display

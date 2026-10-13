@@ -2943,9 +2943,61 @@ void test_agent_progress_opening_and_finished_thinking_rows() {
           "live tail is unlabeled until commit with the thinking prefix");
 }
 
+void test_bounded_history_rendering() {
+    using namespace ainiux::tui::detail;
+    ainiux::chat::Session session;
+    for (int i = 0; i < 10000; ++i)
+        session.messages.push_back({"user", "old message " + std::to_string(i)});
+    HistoryRenderCache cache;
+    auto draw = [&](size_t budget) {
+        return history_lines_for_session(session, 80, false,
+            ainiux::tui::ActivityKind::None, 0, true, false, budget, &cache);
+    };
+    auto lines = draw(24);
+    check(lines.size() == 24 && cache.formatted_messages == 24,
+          "initial viewport formats only its newest rows in a 10000-message transcript");
+    const size_t formatted = cache.formatted_messages;
+    for (int i = 0; i < 50; ++i) lines = draw(24);
+    check(cache.formatted_messages == formatted && cache.entries.size() == 24,
+          "typing redraws reuse a bounded history cache");
+    session.messages.back().content = "edited message";
+    lines = draw(24);
+    check(cache.formatted_messages == formatted + 1,
+          "same-size/in-place message edits invalidate their cached row");
+    lines = draw(500);
+    check(lines.size() == 500 && cache.entries.size() == 500,
+          "scrollback expands on demand to the configured limit");
+    session.messages.push_back({"assistant", std::string(4000000, 'x') + u8"終わり"});
+    lines = draw(24);
+    check(lines.size() == 24 && cache.entries.size() == 1 &&
+              cache.entries.begin()->second.content.size() <= 24U * 80U * 16U,
+          "one enormous response is bounded before formatting and caching");
+    std::string text;
+    for (const auto& line : lines) for (const auto& segment : line.segments) text += segment.text;
+    check(text.find(u8"終わり") != std::string::npos,
+          "bounded display retains the UTF-8 tail");
+    check(session.messages.size() == 10001 && session.messages.back().content.size() > 4000000,
+          "display limiting preserves the complete transcript");
+    lines = history_lines_for_session(session, 40, true, ainiux::tui::ActivityKind::None,
+                                      0, false, false, 24, &cache);
+    check(lines.size() == 24 && cache.cols == 40,
+          "resize and display settings rebuild only the bounded projection");
+    ainiux::chat::Session timed;
+    timed.messages.push_back({"assistant", "answer"});
+    timed.messages.back().created_at_ms = 2500;
+    timed.messages.back().agent_turn_started_ms = 1000;
+    const auto timed_lines = history_lines_for_session(timed, 80, false,
+        ainiux::tui::ActivityKind::None, 0, true, true, 24);
+    std::string timing;
+    for (const auto& line : timed_lines) for (const auto& segment : line.segments) timing += segment.text;
+    check(timing.find("Task complete in") != std::string::npos,
+          "display timing survives a preceding prompt outside the bounded window");
+}
+
 }  // namespace
 
 void run_all() {
+    test_bounded_history_rendering();
     test_agent_progress_replaces_rows_in_place();
     test_agent_progress_opening_and_finished_thinking_rows();
     test_terminal_frame_renderer_updates_only_changed_rows();

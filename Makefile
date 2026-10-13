@@ -76,6 +76,7 @@ WEB_INDEX := src/web/index.html
 WEB_STYLESHEET := src/web/css/app-v28.css
 WEB_JAVASCRIPT := src/web/js/app-v38.js
 WEB_SELECTOR_JAVASCRIPT := src/web/js/selector-v3.js
+WEB_HISTORY_WINDOW_JAVASCRIPT := src/web/js/history-window-v1.js
 WEB_HIGHLIGHT_JAVASCRIPT := src/web/js/highlight-v5.js
 WEB_SYNTAX_JAVASCRIPT := src/web/js/syntax-v4.js
 WEB_IMAGE_OPTIONS_JAVASCRIPT := src/web/js/image-options-v1.js
@@ -233,12 +234,13 @@ $(VIDEOS_CONFIG_HEADER): $(VIDEOS_CONFIG)
 
 $(OBJ_DIR)/src/config/config.o: $(MODELS_CONFIG_HEADER) $(IMAGES_CONFIG_HEADER) $(VIDEOS_CONFIG_HEADER) $(EDITOR_COMMANDS_CONFIG_HEADER)
 
-$(WEB_ASSET_HEADER): $(WEB_INDEX) $(WEB_STYLESHEET) $(WEB_JAVASCRIPT) $(WEB_HIGHLIGHT_JAVASCRIPT) $(WEB_SYNTAX_JAVASCRIPT) $(WEB_IMAGE_OPTIONS_JAVASCRIPT) $(WEB_VIDEO_OPTIONS_JAVASCRIPT) $(WEB_EDITOR_HISTORY_JAVASCRIPT) $(WEB_EDITOR_INDENTATION_JAVASCRIPT) $(WEB_SELECTOR_JAVASCRIPT)
+$(WEB_ASSET_HEADER): $(WEB_INDEX) $(WEB_STYLESHEET) $(WEB_JAVASCRIPT) $(WEB_HIGHLIGHT_JAVASCRIPT) $(WEB_SYNTAX_JAVASCRIPT) $(WEB_IMAGE_OPTIONS_JAVASCRIPT) $(WEB_VIDEO_OPTIONS_JAVASCRIPT) $(WEB_EDITOR_HISTORY_JAVASCRIPT) $(WEB_EDITOR_INDENTATION_JAVASCRIPT) $(WEB_SELECTOR_JAVASCRIPT) $(WEB_HISTORY_WINDOW_JAVASCRIPT)
 	@mkdir -p $(dir $@)
 	@{ \
 		printf '%s\n' '#pragma once' '#include <string_view>' 'namespace ainiux::server::web {' \
 			'inline constexpr std::string_view kStylesheetPath = "/ui/assets/app-v28.css";' \
 			'inline constexpr std::string_view kJavascriptPath = "/ui/assets/app-v38.js";' \
+			'inline constexpr std::string_view kHistoryWindowJavascriptPath = "/ui/assets/history-window-v1.js";' \
 			'inline constexpr std::string_view kSelectorJavascriptPath = "/ui/assets/selector-v3.js";' \
 			'inline constexpr std::string_view kHighlightJavascriptPath = "/ui/assets/highlight-v5.js";' \
 			'inline constexpr std::string_view kSyntaxJavascriptPath = "/ui/assets/syntax-v4.js";' \
@@ -270,7 +272,9 @@ $(WEB_ASSET_HEADER): $(WEB_INDEX) $(WEB_STYLESHEET) $(WEB_JAVASCRIPT) $(WEB_HIGH
 		cat $(WEB_VIDEO_OPTIONS_JAVASCRIPT); \
 		printf '%s\n' ')AINIUX_VIDOPT";' 'inline constexpr char kSelectorJavascript[] = R"AINIUX_PICKER('; \
 		cat $(WEB_SELECTOR_JAVASCRIPT); \
-		printf '%s\n' ')AINIUX_PICKER";' '}  // namespace ainiux::server::web'; \
+		printf '%s\n' ')AINIUX_PICKER";' 'inline constexpr char kHistoryWindowJavascript[] = R"AINIUX_HISTWIN('; \
+		cat $(WEB_HISTORY_WINDOW_JAVASCRIPT); \
+		printf '%s\n' ')AINIUX_HISTWIN";' '}  // namespace ainiux::server::web'; \
 	} >$@.tmp
 	@mv $@.tmp $@
 
@@ -372,6 +376,7 @@ test-web-js:
 		node --experimental-default-type=module --test tests/unit/web/test_editor_history.mjs; \
 		node --experimental-default-type=module --test tests/unit/web/test_editor_indentation.mjs; \
 		node --experimental-default-type=module --test tests/unit/web/test_selector.mjs; \
+		node --experimental-default-type=module --test tests/unit/web/test_history_window.mjs; \
 		node --test tests/unit/web/test_controller_browser.mjs; \
 	else \
 		echo "SKIP: Node.js is unavailable; browser JavaScript tests were not run"; \

@@ -46,6 +46,10 @@ bool find_embedded_asset(std::string_view path, EmbeddedAsset& asset) {
         asset = {"text/javascript; charset=utf-8", web::kEditorIndentationJavascript};
         return true;
     }
+    if (path == web::kHistoryWindowJavascriptPath) {
+        asset = {"text/javascript; charset=utf-8", web::kHistoryWindowJavascript};
+        return true;
+    }
     if (path == web::kSelectorJavascriptPath) {
         asset = {"text/javascript; charset=utf-8", web::kSelectorJavascript};
         return true;

@@ -55,7 +55,7 @@ provider::RequestContext offline_context(const std::string& workspace) {
 void test_runtime_options_share_cli_projection() {
     provider::RequestContext context;
     context.options.agent_log_enabled = false;
-    context.options.security_review_log_keep_runs = 7;
+    context.options.agent_log_keep_sessions = 7;
     context.options.trusted_prompt_dir = "trusted";
     context.options.max_source_code_file_size = 123456;
     context.options.agent_history_backup_enabled = false;
@@ -85,7 +85,7 @@ void test_runtime_options_share_cli_projection() {
               options.enable_session_db,
           "shared runtime options preserve caller-owned session identity");
     check(!options.enable_agent_log &&
-              options.security_review_log_keep_runs == 7 &&
+              options.agent_log_keep_sessions == 7 &&
               options.trusted_prompt_dir == "trusted" &&
               options.max_source_code_file_size == 123456 &&
               !options.history_backup.enabled &&
@@ -1623,9 +1623,31 @@ void test_reset_model_context_and_visible_clear() {
     fs::remove_all(workspace, ec);
 }
 
+void test_no_turn_session_log_finalization() {
+    const std::string workspace = temp_workspace("no-turn-log");
+    auto context = offline_context(workspace);
+    context.options.agent_log_enabled = true;
+    auto options = agent::make_session_runtime_options(context, workspace, agent::AgentLane::Act, true);
+    options.index_mode = agent::SessionRuntimeOptions::IndexMode::Disabled;
+    agent::AgentSessionRuntime runtime;
+    check(runtime.prepare(context, {}, {}, options).ok(), "prepare a local no-turn session with logging");
+    check(runtime.finish_session("success").ok(), "finish a session before its first model turn");
+    size_t completed = 0, partial = 0;
+    for (const auto& file : fs::directory_iterator(fs::u8path(workspace) / ".ainiux-pr/logs/agent")) {
+        if (file.path().extension() == ".jsonl") ++completed;
+        if (file.path().extension() == ".partial") ++partial;
+    }
+    check(completed == 1 && partial == 0,
+          "no-turn graceful quit durably finalizes the diagnostic session log");
+    runtime.reset();
+    std::error_code ec;
+    fs::remove_all(workspace, ec);
+}
+
 }  // namespace
 
 void run_all() {
+    test_no_turn_session_log_finalization();
     test_runtime_options_share_cli_projection();
     test_prepare_opens_session_db_and_tools();
     test_empty_turn_rejected_when_unprepared();
