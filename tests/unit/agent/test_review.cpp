@@ -256,6 +256,8 @@ void test_prompts_and_report() {
               prompts.agent.find("## Trust") != std::string::npos &&
               prompts.agent.find("Use the code index as a hint, not truth") !=
                   std::string::npos &&
+              prompts.agent.find("symbol to find definitions") !=
+                  std::string::npos &&
               prompts.agent.find("Use glob or grep for search") !=
                   std::string::npos &&
               prompts.agent.find("ls for the real filesystem") !=

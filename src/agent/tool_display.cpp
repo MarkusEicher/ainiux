@@ -269,6 +269,8 @@ std::string classify_tool_error_message(const std::string& message) {
             return "privilege escalation denied";
         return "command not allowed";
     }
+    if (lower.find("parent directory does not exist") != std::string::npos)
+        return "parent directory missing";
     if (lower.find("approval") != std::string::npos ||
         lower.find("headless agent denies") != std::string::npos) {
         return "needs user approval (y/n)";

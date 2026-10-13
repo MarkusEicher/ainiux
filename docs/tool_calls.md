@@ -31,7 +31,7 @@ methodology.
 | `goal_met` | `evidence` | Complete an active `/goal`. Advertised only while a session goal is Active (chrome shows `goal`). Hidden in ordinary Act/Lead turns. |
 | `attach` | `path` | Queue one local PNG/JPEG/GIF for this turn. |
 | `edit` | `path`, `ops` | Preferred in-file edit. Line ops apply bottom-to-top on the original file, before `replace_text`. |
-| `write` | `path`, `content` | Create/overwrite a file. |
+| `write` | `path`, `content` | Create/overwrite a file. Smart/Yolo create missing project parents. |
 | `mkdir` | `path` | Directory create. |
 | `mv` | `source`, `destination` | Rename; destination must not exist. |
 | `rm` | `path` | **Regular file** delete. Directories: `run rmdir` or `run rm -r`. |
@@ -66,7 +66,7 @@ Smart permits validated in-project filesystem commands without a command/option 
 
 - Project commands run after Guard and path validation. Unknown tools and options alone do not ask. This covers broad Git inspection flags, `git add`, path-only unstaging, ordinary commits, fetch, local branch/tag creation, interpreters, builds and tests.
 - Git push, pull/merge/rebase/cherry-pick/revert, amendment, history resets, branch/tag deletion or replacement, and working-file replacement ask. Global Git prefixes, option assignments and combined short flags retain the same risk checks. Dangerous configuration/path overrides stay denied; pager and external-diff hardening remains.
-- All contained project folders, including `.venv`, `.tools`, caches and `.git`, permit direct Agent access. Only `.ainiux-pr` is protected. Discovery/index ignores do not define permissions. Git queries and search exclusion patterns may mention protected names; real cwd, file inputs, outputs and auxiliary options are validated separately.
+- All contained project folders, including `.venv`, `.tools`, and caches, permit direct Agent access. Native mutations refuse `.ainiux-pr` and `.git`; reads of `.git` and `run git` remain allowed. Discovery/index ignores do not define permissions. Git queries and search exclusion patterns may mention protected names; real cwd, file inputs, outputs and auxiliary options are validated separately.
 - `.venv/bin/python` may symlink to the same trusted PATH interpreter and retains the venv prefix. Unknown Python/Node flags alone do not ask. Explicit outside/protected inline literals, listeners/debug loaders, compiler plugins/wrappers and install/deploy targets ask. Inline path scanning is not an OS sandbox.
 - Privilege escalation, free-form shells, destructive search execution, `python -m pip`/`ensurepip`, project-helper wrappers in `python -c`, and existing hard Guard denials remain blocked in Confirm/Smart.
 - Confirm asks for executable commands; unchanged `scripts/ainiux/` content trust remains the exception. Script content and external access combine into one approval after path validation. Headless Ask decisions deny. Restricted sessions and security-review retain their independent allowlists.

@@ -629,6 +629,14 @@ void test_elapsed_seconds_format() {
         R"JSON({"ok":false,"error":{"code":"policy_denied","message":"shell wrappers are not allowed; pass a direct command (no sh -c)"}})JSON";
     check(agent::compact_tool_error_brief(deny_err).find("shell") != std::string::npos,
           "shell-deny brief: " + agent::compact_tool_error_brief(deny_err));
+    const std::string parent_err =
+        R"JSON({"ok":false,"error":{"code":"AINIUX_ERR_FILE_WRITE","message":"parent directory does not exist; pass create_dirs=true or mkdir first"}})JSON";
+    check(agent::compact_tool_error_brief(parent_err).find("parent directory missing") !=
+              std::string::npos,
+          "parent-missing brief: " + agent::compact_tool_error_brief(parent_err));
+    check(agent::compact_tool_error_brief(parent_err).find("approval") == std::string::npos,
+          "parent-missing brief is not an approval prompt: " +
+              agent::compact_tool_error_brief(parent_err));
 }
 
 void test_prior_session_context_includes_recent_work() {

@@ -291,6 +291,17 @@ bool path_has_home_or_env_prefix(const std::string& path) {
     return false;
 }
 
+bool path_has_protected_mutation_dir(const fs::path& path) {
+    for (const fs::path& component : path) {
+        if (is_protected_mutation_dir_name(component.u8string())) return true;
+    }
+    return false;
+}
+
+bool auto_create_contained_parents(PermissionMode mode) {
+    return mode == PermissionMode::Smart || mode == PermissionMode::Yolo;
+}
+
 bool safe_relative_path(const std::string& path) {
     if (path.empty() || path == ".") return true;
     if (path_has_home_or_env_prefix(path)) return false;
@@ -334,7 +345,7 @@ std::string unsafe_path_message(const std::string& path, const char* action = "m
             return std::string("Forbidden to ") + action +
                    " files via environment-style path components (refused: " + path + ").";
         }
-        if (is_project_state_dir_name(value)) {
+        if (is_project_state_dir_name(value) || is_protected_mutation_dir_name(value)) {
             return std::string("Forbidden to ") + action +
                    " protected project metadata (" + value + " in " + path + ").";
         }
@@ -1621,6 +1632,8 @@ Error ReadToolRegistry::resolve_writable_path(const std::string& relative_path,
     if (relative_path.empty() || !safe_relative_path(relative_path))
         return {ErrorCode::BadArgs, unsafe_path_message(relative_path, "create or modify")};
     const std::string generic = fs::u8path(relative_path).generic_u8string();
+    if (path_has_protected_mutation_dir(fs::u8path(generic)))
+        return {ErrorCode::BadArgs, unsafe_path_message(relative_path, "create or modify")};
     if (generic.empty() || generic == ".")
         return {ErrorCode::BadArgs, "path must name a file, not the workspace root"};
     fs::path current(snapshot_.workspace);
@@ -1988,13 +2001,14 @@ Error ReadToolRegistry::write_workspace_file(const std::string& relative_path,
                         "could not create scripts/ainiux/: " +
                             (ec ? ec.message() : std::string("not a directory"))};
         } else {
-            if (!create_dirs)
+            const bool auto_parents = auto_create_contained_parents(permission_mode_);
+            if (!create_dirs && !auto_parents)
                 return {ErrorCode::FileWrite,
-                        "parent directory does not exist; pass create_dirs=true and obtain user "
-                        "approval (interactive agent y/n)"};
-            // Creating new directories is high-impact: require Guard Ask (y/n). Never
-            // silently mkdir -p, and never treat missing parents as free license to wipe.
-            if (!permission_controls_) {
+                        "parent directory does not exist; pass create_dirs=true or mkdir first"};
+            // Smart/Yolo treat contained project paths as fair game (except
+            // .ainiux-pr and .git). Confirm still asks: interactive Confirm
+            // already covered the write; headless Confirm maps Ask to Deny.
+            if (!auto_parents && !permission_controls_) {
                 const std::string parent_rel =
                     fs::u8path(relative_path).parent_path().generic_u8string();
                 GuardApprovalRequest ask;
@@ -3459,8 +3473,8 @@ std::vector<ToolDescriptor> ReadToolRegistry::native_descriptors() const {
     };
     add(NativeToolHandler::Index, ToolSafetyCategory::ReadOnly,
         {"index",
-         "Summarize the code index (languages, file counts, freshness). Not a full "
-         "filesystem listing—use ls for on-disk layout.",
+         "Code-index overview: languages, file counts, important files/symbols, freshness. "
+         "Use to locate indexed source. Not ls (filesystem) and not grep (live search).",
          schema("")}, indexing_enabled_);
     add(NativeToolHandler::List, ToolSafetyCategory::ReadOnly,
         {"ls",
@@ -3484,13 +3498,15 @@ std::vector<ToolDescriptor> ReadToolRegistry::native_descriptors() const {
          schema(search_fields, "\"query\"")});
     add(NativeToolHandler::Symbol, ToolSafetyCategory::ReadOnly,
         {"symbol",
-         "Rank indexed symbols by lexical match, then static importance.",
+         "Find indexed definitions by name (functions, classes, methods). Then read or "
+         "outline the hit. Live content search is grep.",
          schema("\"query\":{\"type\":\"string\"},"
                 "\"max_results\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":200}",
                 "\"query\"")}, indexing_enabled_);
     add(NativeToolHandler::Outline, ToolSafetyCategory::ReadOnly,
         {"outline",
-         "Indexed declarations, signatures, ranges, and docs for one file.",
+         "Indexed declarations, signatures, ranges, and docs for one file. Use before a "
+         "large read when the file is indexed.",
          schema(path, "\"path\"")}, indexing_enabled_);
     add(NativeToolHandler::Read, ToolSafetyCategory::ReadOnly,
         {"read",
@@ -3596,7 +3612,8 @@ std::vector<ToolDescriptor> ReadToolRegistry::native_descriptors() const {
                 "\"path\",\"ops\"")}, allow_mutations());
     add(NativeToolHandler::Write, ToolSafetyCategory::Mutation,
         {"write",
-         "Create or overwrite a UTF-8 file. Prefer edit for project edits.",
+         "Create or overwrite a UTF-8 file. Prefer edit for project edits. Smart/Yolo "
+         "create missing project parents; otherwise pass create_dirs=true or mkdir.",
          schema(path + ",\"content\":{\"type\":\"string\"},"
                        "\"create_dirs\":{\"type\":\"boolean\"},"
                        "\"expected_file_hash\":{\"type\":\"string\"},"
@@ -5676,6 +5693,7 @@ std::string ReadToolRegistry::execute(const std::string& requested_name,
         bool external = false;
         fs::path external_path;
         std::string relative_path;
+        std::string guard_decision;
         Error error = normalize_mutation_path(path, relative_path);
         if (error.ok()) {
             path = std::move(relative_path);
@@ -5684,16 +5702,20 @@ std::string ReadToolRegistry::execute(const std::string& requested_name,
                 "write " + path + " (" + std::to_string(content.size()) + " bytes)",
                 {path, mode, create_dirs ? "create_dirs=true" : "create_dirs=false"},
                 false, false, true, false, {}, {}, cancellation);
-            if (decision == GuardApprovalDecision::Allow)
+            if (decision == GuardApprovalDecision::Allow) {
                 error = write_workspace_file(path, content, create_dirs, mode, expected_hash,
                                              history_path, created, old_hash, new_hash);
-            else
+                if (error.ok()) guard_decision = "allow";
+            } else {
+                guard_decision = decision == GuardApprovalDecision::Cancelled ? "cancelled"
+                                                                             : "deny";
                 error = {decision == GuardApprovalDecision::Cancelled
                              ? ErrorCode::Cancelled
                              : ErrorCode::UnsupportedFeature,
                          decision == GuardApprovalDecision::Cancelled
                              ? "write approval cancelled"
                              : "write requires user approval"};
+            }
         } else if (mutation_policy_ == MutationPolicy::Full) {
             error = resolve_external_file_path(snapshot_.workspace, path, false, external_path);
             if (error.ok()) {
@@ -5722,7 +5744,10 @@ std::string ReadToolRegistry::execute(const std::string& requested_name,
                     else
                         error = write_external_file(external_path, content, create_dirs, mode,
                                                     expected_hash, created, old_hash, new_hash);
+                    if (error.ok()) guard_decision = "allow";
                 } else {
+                    guard_decision = decision == GuardApprovalDecision::Cancelled ? "cancelled"
+                                                                                 : "deny";
                     std::string message =
                         "refusing to write file outside the project directory without user "
                         "approval: " +
@@ -5751,9 +5776,11 @@ std::string ReadToolRegistry::execute(const std::string& requested_name,
         data.object["history_path"] = string_value(history_path);
         data.object["indexed_snapshot_updated"] = bool_value(error.ok() && !external);
         data.object["external"] = bool_value(external);
-        json::Value guard = object_value();
-        guard.object["decision"] = string_value(error.ok() ? "allow" : "deny");
-        data.object["guard"] = std::move(guard);
+        if (!guard_decision.empty()) {
+            json::Value guard = object_value();
+            guard.object["decision"] = string_value(guard_decision);
+            data.object["guard"] = std::move(guard);
+        }
         if (!error.ok()) {
             const std::string code =
                 error.message.find("stale_file") != std::string::npos ? "stale_file"
@@ -5790,7 +5817,10 @@ std::string ReadToolRegistry::execute(const std::string& requested_name,
             std::error_code ec;
             const fs::path root = fs::canonical(snapshot_.workspace, ec);
             const std::string relative = target.lexically_relative(root).generic_u8string();
-            error = validate_mutation_path(relative, true, false);
+            if (path_has_protected_mutation_dir(fs::u8path(relative)))
+                error = {ErrorCode::BadArgs, unsafe_path_message(relative, "create")};
+            else
+                error = validate_mutation_path(relative, true, false);
         }
         const GuardApprovalDecision decision =
             error.ok()
@@ -5862,6 +5892,20 @@ std::string ReadToolRegistry::execute(const std::string& requested_name,
         if (error.ok())
             error = resolve_native_path(snapshot_.workspace, destination_text, false,
                                         destination, destination_external);
+        if (error.ok()) {
+            std::error_code root_ec;
+            const fs::path root = fs::canonical(snapshot_.workspace, root_ec);
+            auto refuse_protected = [&](bool outside, const fs::path& absolute,
+                                        const char* action) {
+                if (outside || root_ec || !error.ok()) return;
+                const std::string relative =
+                    absolute.lexically_relative(root).generic_u8string();
+                if (path_has_protected_mutation_dir(fs::u8path(relative)))
+                    error = {ErrorCode::BadArgs, unsafe_path_message(relative, action)};
+            };
+            refuse_protected(source_external, source, "move");
+            refuse_protected(destination_external, destination, "create");
+        }
         const bool external = source_external || destination_external;
         const bool under_temp =
             (!source_external || resolved_path_is_under_system_temp(source)) &&

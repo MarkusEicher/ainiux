@@ -143,7 +143,7 @@ across platform toolchains.
 
 ## Guard Ask approvals (interactive only)
 
-Destructive-command Guard returns Allow, Deny, or Ask. Hard Deny (shell wrappers, sudo, disk destroyers, `find -delete`) is never elevatable. Ask is for high-risk-but-sometimes-legitimate actions (`git reset --hard`, force push, recursive `rm`, database-file deletion, **creating missing parent directories** via `create_dirs`).
+Destructive-command Guard returns Allow, Deny, or Ask. Hard Deny (shell wrappers, sudo, disk destroyers, `find -delete`) is never elevatable. Ask is for high-risk-but-sometimes-legitimate actions (`git reset --hard`, force push, recursive `rm`, database-file deletion, **creating missing parent directories** via `create_dirs` in Confirm). Smart/Yolo create contained missing parents without Ask.
 
 Interactive Agent layers a project-persisted `confirm`/`smart`/`yolo` permission policy above Guard. The registry validates a complete tool call before requesting one consolidated decision, then revalidates canonical external targets before mutation. Native exact-path tools are preferred over command equivalents because they are structured, bounded, cancellable, and easier to validate. External changes intentionally receive no project history/index entry. `run` stays fixed-PATH direct argv execution; approval never enables shell composition.
 

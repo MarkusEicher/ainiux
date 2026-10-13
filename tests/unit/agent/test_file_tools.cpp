@@ -153,7 +153,7 @@ void test_smart_default_allow_project_workflow() {
     succeeds("git init");
     write_text(root / ".gitignore", ".ainiux-pr/\n.venv/\n.tools/\nremote.git/\n");
     const std::vector<std::string> directories = {".venv", ".tools", ".pytest_cache",
-        ".probe", "node_modules", "build", ".git", ".hg", ".svn", ".ainiux", "arbitrary-folder"};
+        ".probe", "node_modules", "build", ".hg", ".svn", ".ainiux", "arbitrary-folder"};
     for (const auto& directory : directories) {
         fs::create_directories(root / directory);
         const std::string file = directory + "/ainiux-permission-test.txt";
@@ -164,12 +164,20 @@ void test_smart_default_allow_project_workflow() {
         check(json_ok(smart.execute("ls", "{\"path\":" + json_string(directory) + "}")),
               "Smart lists " + directory);
         check(json_ok(smart.execute("write", "{\"path\":" + json_string(directory + "/new/child.txt") +
-            ",\"content\":\"project-file\",\"create_dirs\":true}")),
+            ",\"content\":\"project-file\"}")),
               "Smart creates missing parents inside " + directory);
 #if !defined(_WIN32)
         succeeds("cat " + file);
 #endif
     }
+    fs::create_directories(root / ".git");
+    write_text(root / ".git" / "HEAD", "ref: refs/heads/main\n");
+    check(!json_ok(smart.execute("write", R"({"path":".git/hooks/x","content":"x"})")),
+          "Smart refuses native writes under .git");
+    check(json_ok(smart.execute("read", R"({"path":".git/HEAD"})")),
+          "Smart reads .git");
+    check(json_ok(smart.execute("ls", R"({"path":".git"})")),
+          "Smart lists .git");
     const std::vector<std::string> ordinary = {
         "git ls-files --directory -o --exclude-standard",
         "git ls-files -s src/hello.cpp", "git ls-files -z --stage --full-name",
@@ -1001,25 +1009,56 @@ void test_write_file_create_and_readback() {
     check(fs::exists(fs::path(workspace) / json_data_string(overwrite, "history_path")),
           "history backup file exists");
 
-    // Headless create_dirs without approval must fail (no silent mkdir -p).
-    const std::string nested_denied = tools.execute(
+    // Smart/Yolo create contained missing parents without create_dirs or Ask.
+    const std::string nested_smart = tools.execute(
         "write",
-        R"({"path":"src/deep/nested/file.txt","content":"nested\n","create_dirs":true,"mode":"create_new"})");
-    check(!json_ok(nested_denied), "headless create_dirs denied without Ask: " + nested_denied);
-    check(nested_denied.find("create directories") != std::string::npos ||
-              nested_denied.find("approval") != std::string::npos ||
-              nested_denied.find("headless") != std::string::npos,
-          "create_dirs deny message: " + nested_denied);
-    check(!fs::exists(fs::path(workspace) / "src" / "deep" / "nested" / "file.txt"),
-          "denied create_dirs did not write nested file");
+        R"({"path":"src/deep/nested/file.txt","content":"nested\n","mode":"create_new"})");
+    check(json_ok(nested_smart), "headless Smart creates missing parents: " + nested_smart);
+    check(read_text(fs::path(workspace) / "src" / "deep" / "nested" / "file.txt") == "nested\n",
+          "Smart nested create wrote content");
+    const std::string git_write =
+        tools.execute("write", R"({"path":".git/hooks/x","content":"x\n"})");
+    check(!json_ok(git_write) && git_write.find(".git") != std::string::npos,
+          "native write under .git is denied: " + git_write);
 
-    // With interactive-style approval of ask_on_create_dirs only.
-    agent::ReadToolRegistry approved = make_registry(workspace, true, true);
+    agent::ReadToolRegistry yolo =
+        make_registry(workspace, agent::MutationPolicy::Full, false, {},
+                      agent::PermissionMode::Yolo, false);
+    const std::string nested_yolo = yolo.execute(
+        "write",
+        R"({"path":".probe/multi/helper.ax","content":"probe\n","mode":"create_new"})");
+    check(json_ok(nested_yolo), "headless Yolo creates missing parents: " + nested_yolo);
+    check(read_text(fs::path(workspace) / ".probe" / "multi" / "helper.ax") == "probe\n",
+          "Yolo nested create wrote content");
+
+    agent::ReadToolRegistry confirm =
+        make_registry(workspace, agent::MutationPolicy::Full, false, {},
+                      agent::PermissionMode::Confirm, false);
+    const std::string nested_confirm = confirm.execute(
+        "write",
+        R"({"path":"src/confirm/nested/file.txt","content":"nested\n","mode":"create_new"})");
+    check(!json_ok(nested_confirm),
+          "headless Confirm omits create_dirs and fails: " + nested_confirm);
+    check(nested_confirm.find("parent directory does not exist") != std::string::npos &&
+              nested_confirm.find("approval") == std::string::npos,
+          "Confirm missing-parent message has no approval wording: " + nested_confirm);
+    const std::string nested_confirm_ask = confirm.execute(
+        "write",
+        R"({"path":"src/confirm/nested/file.txt","content":"nested\n","create_dirs":true,"mode":"create_new"})");
+    check(!json_ok(nested_confirm_ask),
+          "headless Confirm create_dirs denied without Ask: " + nested_confirm_ask);
+    check(!fs::exists(fs::path(workspace) / "src" / "confirm" / "nested" / "file.txt"),
+          "denied Confirm create_dirs did not write nested file");
+
+    // With interactive-style approval of ask_on_create_dirs only (Confirm).
+    agent::ReadToolRegistry approved =
+        make_registry(workspace, agent::MutationPolicy::Full, true, {},
+                      agent::PermissionMode::Confirm, false);
     const std::string nested = approved.execute(
         "write",
-        R"({"path":"src/deep/nested/file.txt","content":"nested\n","create_dirs":true,"mode":"create_new"})");
+        R"({"path":"src/confirm/nested/file.txt","content":"nested\n","create_dirs":true,"mode":"create_new"})");
     check(json_ok(nested), "create_dirs after approval creates parents: " + nested);
-    check(read_text(fs::path(workspace) / "src" / "deep" / "nested" / "file.txt") == "nested\n",
+    check(read_text(fs::path(workspace) / "src" / "confirm" / "nested" / "file.txt") == "nested\n",
           "nested create wrote content");
 
     const std::string escape =
@@ -2106,8 +2145,20 @@ void test_removed_index_and_macro_tools_not_advertised() {
         if (def.name == "ls") saw_list_dir = true;
         if (def.name == "list_directory" || def.name == "list_dir")
             saw_list_directory = true;
-        if (def.name == "index") saw_index_overview = true;
-        if (def.name == "outline") saw_file_outline = true;
+        if (def.name == "index") {
+            saw_index_overview = true;
+            check(def.description.find("locate indexed source") != std::string::npos,
+                  "index description advertises navigation");
+        }
+        if (def.name == "symbol") {
+            check(def.description.find("Find indexed definitions") != std::string::npos,
+                  "symbol description advertises definition search");
+        }
+        if (def.name == "outline") {
+            saw_file_outline = true;
+            check(def.description.find("Use before a large read") != std::string::npos,
+                  "outline description advertises per-file use");
+        }
         if (def.name == "edit") {
             check(def.parameters_json.find("replace_range") != std::string::npos &&
                       def.description.find("Flat ops") != std::string::npos &&
