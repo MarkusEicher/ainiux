@@ -174,7 +174,7 @@ ainiux --print-index
 ainiux --clear-index
 ```
 
-It stores metadata, files, definitions, and static 0–100 declaration importance. Exact lexical relevance and multi-token coverage rank ahead of importance. It intentionally stores no reference graph, caller counts, evidence edges, or automatic request-context hints.
+It stores metadata, files, definitions, and static 0–100 declaration importance. Exact lexical relevance and multi-token coverage rank ahead of importance. It intentionally stores no reference graph, caller counts, evidence edges, or automatic request-context hints. JSON, JSONL, GeoJSON, and JSON5 files are not indexed; their keys are data rather than code symbols. `glob` and `grep` still search those files.
 
 The index is a navigation hint, never compiler-grade ground truth. Agents must verify current files before editing. `glob` and `grep` search the live workspace independently of the index; `index` / `symbol` / `outline` do not. Native mutations update the live touched-file view and coalesce persistent refresh work. Cancellation keeps the previous completed database generation.
 

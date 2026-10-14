@@ -110,14 +110,22 @@ printf '%s\n' 'indexedYaml:' '  enabled: true' > "$LANG_WORK/config.yaml"
 printf '%s\n' '[indexedIni]' 'enabled = true' > "$LANG_WORK/config.ini"
 (cd "$LANG_WORK" && "$BIN" --index-code --print-index >"$LANG_WORK/report.md" 2>"$LANG_WORK/index.stderr")
 sed 's/│/|/g' "$LANG_WORK/report.md" > "$LANG_WORK/report-ascii.md"
-for language in Markdown 'C++' 'C#' Java HTML-only XML JSON Bash PHP Perl Ruby Rust Go PowerShell Assembly SQL TOML YAML INI; do
+for language in Markdown 'C++' 'C#' Java HTML-only XML Bash PHP Perl Ruby Rust Go PowerShell Assembly SQL TOML YAML INI; do
     grep -Fq "| $language " "$LANG_WORK/report-ascii.md"
 done
 for symbol in 'Indexed Markdown' IndexedCpp IndexedCSharp IndexedJava indexed-xhtml IndexedXml \
-    indexedJson indexed_bash indexed_php indexed_perl indexed_ruby indexed_rust indexedGo \
+    indexed_bash indexed_php indexed_perl indexed_ruby indexed_rust indexedGo \
     Indexed-PowerShell indexed_assembly indexed_sql indexedToml indexedYaml indexedIni; do
     grep -Fq "$symbol" "$LANG_WORK/report.md"
 done
+if grep -Fq 'JSON' "$LANG_WORK/report-ascii.md"; then
+    echo 'code index unexpectedly included JSON' >&2
+    exit 1
+fi
+if grep -Fq 'indexedJson' "$LANG_WORK/report.md"; then
+    echo 'JSON data file was unexpectedly indexed' >&2
+    exit 1
+fi
 if grep -Fq 'notIndexedHere' "$LANG_WORK/report.md"; then
     echo 'HTML-only indexing unexpectedly scanned embedded JavaScript' >&2
     exit 1

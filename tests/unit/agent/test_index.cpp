@@ -389,7 +389,7 @@ void test_all_editor_language_detection() {
         {"module.JSX", Language::JavaScript},    {"module.TSX", Language::TypeScript},
         {"index.HTML", Language::Html},           {"index.XHTML", Language::HtmlOnly},
         {"theme.CSS", Language::Css},             {"schema.XML", Language::Xml},
-        {"data.JSONL", Language::Json},           {"script.BASH", Language::Bash},
+        {"script.BASH", Language::Bash},
         {"module.PHP", Language::Php},            {"module.PM", Language::Perl},
         {"Gemfile", Language::Ruby},              {"module.RS", Language::Rust},
         {"module.GO", Language::Go},              {"module.PS1", Language::PowerShell},
@@ -405,6 +405,12 @@ void test_all_editor_language_detection() {
     Language detected = Language::Python;
     check(!ainiux::agent::index::language_for_path("notes.txt", detected),
           "code index continues to exclude editor plain-text files");
+    for (const char* path : {"data.json", "events.jsonl", "map.geojson", "config.json5",
+                             "stream.ndjson", "DATA.JSON"}) {
+        detected = Language::Python;
+        check(!ainiux::agent::index::language_for_path(path, detected),
+              std::string("code index excludes JSON data files: ") + path);
+    }
 }
 
 void test_markdown_markup_and_data_scanners() {
@@ -438,17 +444,6 @@ void test_markdown_markup_and_data_scanners() {
               has_symbol(scan, "declaration", "xs:element::User") &&
               !has_symbol(scan, "element", "#hidden"),
           "XML scanner finds roots and named declarations while masking comments");
-
-    const std::string json =
-        "{\n"
-        "  \"config\": {\"port\": 8080},\n"
-        "  \"message\": \"{\\\"hidden\\\": 1}\"\n"
-        "}\n"
-        "{\"jsonl_key\": true}\n";
-    scan = ainiux::agent::index::scan_source("data.jsonl", json, Language::Json);
-    check(has_symbol(scan, "key", "config") && has_symbol(scan, "key", "config::port") &&
-              has_symbol(scan, "key", "jsonl_key") && !has_symbol(scan, "key", "hidden"),
-          "JSON scanner finds nested and JSONL keys without matching strings");
 }
 
 void test_managed_language_scanners() {
@@ -686,6 +681,7 @@ void test_refresh_incremental_report_and_skips() {
     write_file(root / ".gitignore", "*.py\n!keep.py\n");
     write_file(root / "keep.py", "# greeting\ndef hello(name):\n    return 'Hei, ' + name\n");
     write_file(root / "ignored.py", "def ignored():\n    pass\n");
+    write_file(root / "data.json", "{\"indexedJson\": true}\n");
     write_file(root / "src" / "main.c", "int main(void) { return 0; }\n");
     write_file(root / "build" / "generated.cpp", "int generated();\n");
     write_file(root / ".hidden" / "private.jsonl",
@@ -714,6 +710,7 @@ void test_refresh_incremental_report_and_skips() {
         found_main = found_main || file.path == "src/main.c";
         found_ignored = found_ignored || file.path == "ignored.py" ||
                         file.path == "build/generated.cpp" ||
+                        file.path == "data.json" ||
                         file.path == ".hidden/private.jsonl" ||
                         file.path == "linked-outside/escaped.py";
     }
@@ -801,7 +798,9 @@ void test_refresh_incremental_report_and_skips() {
               markdown.str().find("Importance:") != std::string::npos &&
               markdown.str().find("Reference Graph") == std::string::npos &&
               markdown.str().find("private.jsonl") == std::string::npos &&
-              markdown.str().find("agent.jsonl") == std::string::npos,
+              markdown.str().find("agent.jsonl") == std::string::npos &&
+              markdown.str().find("data.json") == std::string::npos &&
+              markdown.str().find("indexedJson") == std::string::npos,
           "Markdown report includes symbols, skips, per-language lines, and combined totals");
     ainiux::agent::index::Snapshot compact_snapshot;
     error = ainiux::agent::index::load_snapshot(options, compact_snapshot);

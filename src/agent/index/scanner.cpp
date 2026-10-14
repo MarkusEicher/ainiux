@@ -1123,7 +1123,6 @@ const char* language_name(Language language) {
         case Language::HtmlOnly: return "HTML-only";
         case Language::Css: return "CSS";
         case Language::Xml: return "XML";
-        case Language::Json: return "JSON";
         case Language::Bash: return "Bash";
         case Language::Php: return "PHP";
         case Language::Perl: return "Perl";
@@ -1154,7 +1153,9 @@ bool language_for_path(const std::string& path, Language& language) {
         case highlight::Language::HtmlOnly: language = Language::HtmlOnly; return true;
         case highlight::Language::Css: language = Language::Css; return true;
         case highlight::Language::Xml: language = Language::Xml; return true;
-        case highlight::Language::Json: language = Language::Json; return true;
+        // JSON/JSONL keys pollute the symbol namespace; data files stay
+        // searchable with glob and grep.
+        case highlight::Language::Json: return false;
         case highlight::Language::Bash: language = Language::Bash; return true;
         case highlight::Language::Php: language = Language::Php; return true;
         case highlight::Language::Perl: language = Language::Perl; return true;
@@ -1300,7 +1301,6 @@ ScanResult scan_source(const std::string& path, const std::string& source, Langu
         case Language::CSharp:
         case Language::Java:
         case Language::Xml:
-        case Language::Json:
         case Language::Bash:
         case Language::Php:
         case Language::Perl:

@@ -13,7 +13,7 @@
 namespace ainiux::agent::index {
 
 inline constexpr int kSchemaVersion = 4;
-inline constexpr int kScannerVersion = 5;
+inline constexpr int kScannerVersion = 6;
 
 enum class Language {
     Markdown,
@@ -28,7 +28,6 @@ enum class Language {
     HtmlOnly,
     Css,
     Xml,
-    Json,
     Bash,
     Php,
     Perl,

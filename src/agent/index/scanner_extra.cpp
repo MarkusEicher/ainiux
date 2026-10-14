@@ -1089,84 +1089,6 @@ ScanResult scan_xml(const std::string& source) {
     return result;
 }
 
-std::string json_key_name(const std::string& source, std::size_t begin, std::size_t end) {
-    std::string output;
-    for (std::size_t pos = begin; pos < end; ++pos) {
-        if (source[pos] == '\\' && pos + 1 < end) {
-            const char escaped = source[++pos];
-            if (escaped == 'n') output.push_back('\n');
-            else if (escaped == 'r') output.push_back('\r');
-            else if (escaped == 't') output.push_back('\t');
-            else output.push_back(escaped);
-        } else {
-            output.push_back(source[pos]);
-        }
-    }
-    return output;
-}
-
-ScanResult scan_json(const std::string& source) {
-    ScanResult result;
-    result.language = Language::Json;
-    const std::vector<std::string> original = source_lines(source);
-    const SourceLineMap line_map(source);
-    struct Frame { char kind; std::string component; };
-    std::vector<Frame> frames;
-    std::string pending_key;
-    for (std::size_t pos = 0; pos < source.size();) {
-        if (source[pos] == '/' && pos + 1 < source.size() && source[pos + 1] == '/') {
-            const std::size_t end = source.find('\n', pos + 2);
-            pos = end == std::string::npos ? source.size() : end + 1;
-            continue;
-        }
-        if (source[pos] == '/' && pos + 1 < source.size() && source[pos + 1] == '*') {
-            const std::size_t end = source.find("*/", pos + 2);
-            pos = end == std::string::npos ? source.size() : end + 2;
-            continue;
-        }
-        if (source[pos] == '"') {
-            const std::size_t quote = pos++;
-            const std::size_t begin = pos;
-            bool escaped = false;
-            while (pos < source.size()) {
-                if (!escaped && source[pos] == '"') break;
-                if (!escaped && source[pos] == '\\') escaped = true;
-                else escaped = false;
-                ++pos;
-            }
-            if (pos >= source.size()) break;
-            const std::size_t end = pos++;
-            std::size_t after = pos;
-            while (after < source.size() &&
-                   std::isspace(static_cast<unsigned char>(source[after]))) ++after;
-            if (after < source.size() && source[after] == ':') {
-                const std::string name = json_key_name(source, begin, end);
-                std::vector<std::string> parts;
-                for (const Frame& frame : frames) {
-                    if (!frame.component.empty()) parts.push_back(frame.component);
-                }
-                append_symbol(result, original, "key", name, join_qualified(parts, name),
-                              source.substr(quote, after - quote + 1), line_map.line_at(quote),
-                              line_map.line_at(after));
-                pending_key = name;
-                pos = after + 1;
-            }
-            continue;
-        }
-        const char ch = source[pos++];
-        if (ch == '{' || ch == '[') {
-            frames.push_back({ch, pending_key});
-            pending_key.clear();
-        } else if (ch == '}' || ch == ']') {
-            if (!frames.empty()) frames.pop_back();
-            pending_key.clear();
-        } else if (ch == ',') {
-            pending_key.clear();
-        }
-    }
-    return result;
-}
-
 ScanResult scan_sql(const std::string& source) {
     ScanResult result;
     result.language = Language::Sql;
@@ -1282,7 +1204,6 @@ ScanResult scan_additional_source(const std::string& source, Language language) 
         case Language::CSharp:
         case Language::Java: return scan_managed(source, language);
         case Language::Xml: return scan_xml(source);
-        case Language::Json: return scan_json(source);
         case Language::Bash: return scan_bash(source);
         case Language::Php: return scan_php(source);
         case Language::Perl: return scan_perl(source);

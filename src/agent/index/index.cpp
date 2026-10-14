@@ -236,7 +236,6 @@ Language parse_language(const std::string& value) {
     if (value == "HTML-only") return Language::HtmlOnly;
     if (value == "CSS") return Language::Css;
     if (value == "XML") return Language::Xml;
-    if (value == "JSON") return Language::Json;
     if (value == "Bash") return Language::Bash;
     if (value == "PHP") return Language::Php;
     if (value == "Perl") return Language::Perl;
