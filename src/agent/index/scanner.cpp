@@ -263,6 +263,371 @@ ScanResult scan_python(const std::string& source) {
     return result;
 }
 
+bool ainiux_ident_start(char ch) {
+    return std::isalpha(static_cast<unsigned char>(ch)) != 0 || ch == '_';
+}
+
+bool ainiux_ident_cont(char ch) {
+    return std::isalnum(static_cast<unsigned char>(ch)) != 0 || ch == '_';
+}
+
+void ainiux_skip_space(const std::string& text, std::size_t& pos) {
+    while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) ++pos;
+}
+
+std::string ainiux_parse_ident(const std::string& text, std::size_t& pos) {
+    ainiux_skip_space(text, pos);
+    if (pos >= text.size() || !ainiux_ident_start(text[pos])) return {};
+    const std::size_t begin = pos++;
+    while (pos < text.size() && ainiux_ident_cont(text[pos])) ++pos;
+    return text.substr(begin, pos - begin);
+}
+
+bool ainiux_keyword_name(const std::string& name) {
+    static const std::set<std::string> keywords = {
+        "with", "fn", "struct", "class", "static", "this", "super", "if", "elif",
+        "else", "for", "in", "while", "break", "continue", "return", "match",
+        "import", "from", "try", "catch", "raise", "yield", "and", "or", "not",
+        "true", "false", "nil", "par", "spawn", "defer", "enum", "is", "pass",
+        "assert"};
+    return keywords.find(name) != keywords.end();
+}
+
+std::string ainiux_slice_grouped(const std::string& text, std::size_t open) {
+    if (open >= text.size()) return {};
+    const char closer = text[open] == '(' ? ')' : (text[open] == '[' ? ']' : '\0');
+    if (closer == '\0') return {};
+    int depth = 0;
+    for (std::size_t pos = open; pos < text.size(); ++pos) {
+        if (text[pos] == text[open]) ++depth;
+        else if (text[pos] == closer && depth > 0 && --depth == 0)
+            return text.substr(open + 1, pos - open - 1);
+    }
+    return text.substr(open + 1);
+}
+
+std::string ainiux_extract_plain_string(const std::vector<std::string>& lines,
+                                        std::size_t row,
+                                        std::size_t column) {
+    auto skip_space = [&]() {
+        while (row < lines.size()) {
+            while (column < lines[row].size() &&
+                   std::isspace(static_cast<unsigned char>(lines[row][column]))) {
+                ++column;
+            }
+            if (column < lines[row].size()) return true;
+            ++row;
+            column = 0;
+        }
+        return false;
+    };
+    if (!skip_space()) return {};
+    const std::string& line = lines[row];
+    if (column > 0) {
+        const char prefix = line[column - 1];
+        if ((prefix == 'f' || prefix == 'F' || prefix == 'r' || prefix == 'R' ||
+             prefix == 'b' || prefix == 'B') &&
+            (column == 1 || !ainiux_ident_cont(line[column - 2]))) {
+            return {};
+        }
+    }
+    std::string delimiter;
+    if (column + 2 < line.size() && (line.compare(column, 3, "\"\"\"") == 0 ||
+                                     line.compare(column, 3, "'''") == 0)) {
+        delimiter = line.substr(column, 3);
+        column += 3;
+    } else if (line[column] == '"' || line[column] == '\'') {
+        delimiter.assign(1, line[column]);
+        ++column;
+    } else {
+        return {};
+    }
+    std::string doc;
+    for (; row < lines.size(); ++row) {
+        const std::string& current = lines[row];
+        for (; column < current.size(); ++column) {
+            if (delimiter.size() == 1 && current[column] == '\\') {
+                if (column + 1 < current.size()) {
+                    doc.push_back(current[column + 1]);
+                    ++column;
+                }
+                continue;
+            }
+            if (current.compare(column, delimiter.size(), delimiter) == 0)
+                return bounded_documentation(std::move(doc));
+            doc.push_back(current[column]);
+            if (doc.size() > kMaximumDocumentationBytes * 2)
+                return bounded_documentation(std::move(doc));
+        }
+        if (!doc.empty()) doc.push_back(' ');
+        column = 0;
+    }
+    return bounded_documentation(std::move(doc));
+}
+
+struct AiniuxDecl {
+    std::string kind;
+    std::string name;
+    std::string parameters;
+    std::string return_type;
+    char suite = '\0';
+    std::size_t suite_line = 0;
+    std::size_t suite_column = std::string::npos;
+};
+
+bool parse_ainiux_declaration(const std::string& masked,
+                              std::size_t start_line,
+                              std::size_t header_end_line,
+                              const std::vector<std::string>& masked_lines,
+                              AiniuxDecl& decl) {
+    std::size_t pos = 0;
+    std::string word = ainiux_parse_ident(masked, pos);
+    if (word == "static") word = ainiux_parse_ident(masked, pos);
+    if (word == "fn" || word == "class" || word == "struct" || word == "enum") {
+        decl.kind = word;
+        decl.name = ainiux_parse_ident(masked, pos);
+        if (decl.name.empty() || ainiux_keyword_name(decl.name)) return false;
+        ainiux_skip_space(masked, pos);
+        if (pos < masked.size() && masked[pos] == '(') {
+            decl.parameters = collapse_space(ainiux_slice_grouped(masked, pos));
+            int depth = 0;
+            for (; pos < masked.size(); ++pos) {
+                if (masked[pos] == '(') ++depth;
+                else if (masked[pos] == ')' && depth > 0 && --depth == 0) {
+                    ++pos;
+                    break;
+                }
+            }
+        }
+        ainiux_skip_space(masked, pos);
+        if (pos + 1 < masked.size() && masked.compare(pos, 2, "->") == 0) {
+            pos += 2;
+            ainiux_skip_space(masked, pos);
+            const std::size_t begin = pos;
+            int grouping = 0;
+            while (pos < masked.size()) {
+                const char ch = masked[pos];
+                if (ch == '(' || ch == '[') ++grouping;
+                else if ((ch == ')' || ch == ']') && grouping > 0) --grouping;
+                else if (grouping == 0 && (ch == '{' || ch == ':' || ch == '=')) break;
+                ++pos;
+            }
+            decl.return_type = trim(masked.substr(begin, pos - begin));
+        }
+        ainiux_skip_space(masked, pos);
+        if (pos < masked.size() &&
+            (masked[pos] == '{' || masked[pos] == ':' || masked[pos] == '=')) {
+            decl.suite = masked[pos];
+        }
+    } else {
+        return false;
+    }
+
+    auto locate_suite = [&](char mark) {
+        int grouping = 0;
+        if (masked_lines.empty()) return false;
+        const std::size_t last = std::min(header_end_line, masked_lines.size() - 1);
+        for (std::size_t row = start_line; row <= last; ++row) {
+            const std::string& current = masked_lines[row];
+            for (std::size_t column = 0; column < current.size(); ++column) {
+                const char ch = current[column];
+                if (ch == '(' || ch == '[') ++grouping;
+                else if ((ch == ')' || ch == ']') && grouping > 0) --grouping;
+                else if (grouping == 0 && ch == mark) {
+                    decl.suite_line = row;
+                    decl.suite_column = column;
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    if (decl.suite != '\0') locate_suite(decl.suite);
+    return true;
+}
+
+ScanResult scan_ainiux(const std::string& source) {
+    ScanResult result;
+    result.language = Language::Ainiux;
+    const std::vector<std::string> original = source_lines(source);
+    const std::vector<std::string> masked = source_lines(mask_python(source));
+    struct Scope {
+        int indent = 0;
+        int end_line = 0;
+        bool brace = false;
+        std::string name;
+        std::string kind;
+    };
+    std::vector<Scope> scopes;
+    static const std::regex field_pattern(
+        R"(^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(\S.*)$)", std::regex::optimize);
+    static const std::regex assignment_pattern(
+        R"(^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?::[^=]+)?=)", std::regex::optimize);
+
+    for (std::size_t line = 0; line < masked.size(); ++line) {
+        while (!scopes.empty() && scopes.back().brace &&
+               scopes.back().end_line < static_cast<int>(line + 1)) {
+            scopes.pop_back();
+        }
+        if (trim(masked[line]).empty()) continue;
+        const int indent = indentation(masked[line]);
+        while (!scopes.empty() && !scopes.back().brace && indent <= scopes.back().indent) {
+            scopes.pop_back();
+        }
+        const std::string stripped = trim(masked[line]);
+        if (stripped.front() == '}') continue;
+
+        std::string logical_masked = masked[line];
+        std::string logical_original = original[line];
+        int grouping = 0;
+        auto count_grouping = [&](const std::string& text) {
+            for (char ch : text) {
+                if (ch == '(' || ch == '[') ++grouping;
+                else if ((ch == ')' || ch == ']') && grouping > 0) --grouping;
+            }
+        };
+        count_grouping(logical_masked);
+        std::size_t end_line = line;
+        while (grouping > 0 && end_line + 1 < masked.size() && end_line - line < 32) {
+            ++end_line;
+            logical_masked += "\n" + masked[end_line];
+            logical_original += "\n" + original[end_line];
+            count_grouping(masked[end_line]);
+        }
+        const std::string header = collapse_space(logical_masked);
+        AiniuxDecl decl;
+        bool declaration =
+            parse_ainiux_declaration(header, line, end_line, masked, decl);
+        if (declaration && decl.suite == '\0' && end_line + 1 < masked.size()) {
+            const std::string next = trim(masked[end_line + 1]);
+            if (!next.empty() &&
+                (next.front() == '{' || next.front() == ':' || next.front() == '=' ||
+                 next.rfind("->", 0) == 0)) {
+                ++end_line;
+                logical_masked += "\n" + masked[end_line];
+                logical_original += "\n" + original[end_line];
+                decl = {};
+                declaration = parse_ainiux_declaration(
+                    collapse_space(logical_masked), line, end_line, masked, decl);
+            }
+        }
+
+        bool in_function = false;
+        bool in_class = false;
+        bool in_enum = false;
+        bool in_struct = false;
+        std::vector<std::string> parts;
+        for (const Scope& scope : scopes) {
+            if (!scope.name.empty()) parts.push_back(scope.name);
+            if (scope.kind == "class") {
+                in_class = true;
+                in_function = false;
+            } else if (scope.kind == "function") {
+                in_function = true;
+            } else if (scope.kind == "enum") {
+                in_enum = true;
+            } else if (scope.kind == "struct") {
+                in_struct = true;
+            }
+        }
+
+        if (declaration && (decl.kind == "fn" || decl.kind == "class" ||
+                            decl.kind == "struct" || decl.kind == "enum")) {
+            Symbol symbol;
+            symbol.name = decl.name;
+            if (decl.kind == "fn") {
+                symbol.kind = in_class && !in_function ? "method" : "function";
+            } else {
+                symbol.kind = decl.kind;
+            }
+            symbol.qualified_name = join_qualified(parts, decl.name);
+            symbol.signature = collapse_space(logical_original);
+            symbol.parameters = decl.parameters;
+            symbol.return_type = decl.return_type;
+            symbol.line_start = static_cast<int>(line + 1);
+            int body_end = static_cast<int>(end_line + 1);
+            if (decl.suite == '{' && decl.suite_column != std::string::npos) {
+                body_end = matching_brace_line(masked, decl.suite_line, decl.suite_column);
+            } else if (decl.suite == ':') {
+                body_end = python_block_end(masked, end_line, indent);
+            }
+            symbol.line_end = body_end;
+            if (decl.suite == '{' && decl.suite_column != std::string::npos) {
+                symbol.documentation = ainiux_extract_plain_string(
+                    original, decl.suite_line, decl.suite_column + 1);
+            } else if (decl.suite == ':' && decl.suite_column != std::string::npos) {
+                symbol.documentation = ainiux_extract_plain_string(
+                    original, decl.suite_line, decl.suite_column + 1);
+                if (symbol.documentation.empty()) {
+                    symbol.documentation =
+                        python_docstring(original, end_line + 1, indent);
+                }
+            }
+            if (symbol.documentation.empty()) {
+                symbol.documentation = preceding_python_comment(original, line);
+            }
+            symbol.signature_hash = fnv1a(symbol.signature);
+            symbol.body_hash = fnv1a(line_range(original, symbol.line_start, symbol.line_end));
+            result.symbols.push_back(std::move(symbol));
+
+            const std::string scope_kind =
+                decl.kind == "fn" ? "function" : (decl.kind == "class" ? "class" : decl.kind);
+            if (decl.suite == '{') {
+                scopes.push_back({indent, body_end, true, decl.name, scope_kind});
+            } else if (decl.suite == ':') {
+                scopes.push_back({indent, body_end, false, decl.name, scope_kind});
+            }
+            line = end_line;
+            continue;
+        }
+
+        std::smatch match;
+        const std::string field_text = collapse_space(masked[line]);
+        if (!in_function && !in_enum && !in_struct && in_class &&
+            std::regex_match(field_text, match, field_pattern)) {
+            const std::string name = match[1].str();
+            const std::string rest = trim(match[2].str());
+            std::size_t type_pos = 0;
+            const std::string leading = ainiux_parse_ident(rest, type_pos);
+            if (!ainiux_keyword_name(name) &&
+                (leading.empty() || !ainiux_keyword_name(leading))) {
+                Symbol symbol;
+                symbol.name = name;
+                symbol.kind = "field";
+                symbol.qualified_name = join_qualified(parts, name);
+                symbol.signature = collapse_space(original[line]);
+                symbol.line_start = symbol.line_end = static_cast<int>(line + 1);
+                symbol.documentation = preceding_python_comment(original, line);
+                symbol.signature_hash = fnv1a(symbol.signature);
+                symbol.body_hash = symbol.signature_hash;
+                result.symbols.push_back(std::move(symbol));
+            }
+            continue;
+        }
+        if (!in_function && !in_enum && !in_struct &&
+            std::regex_search(masked[line], match, assignment_pattern)) {
+            const std::string name = match[1].str();
+            if (!ainiux_keyword_name(name)) {
+                Symbol symbol;
+                symbol.name = name;
+                const bool constant =
+                    name.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_") ==
+                    std::string::npos;
+                symbol.kind = in_class ? "field" : (constant ? "constant" : "global");
+                symbol.qualified_name = join_qualified(parts, name);
+                symbol.signature = collapse_space(original[line]);
+                symbol.line_start = symbol.line_end = static_cast<int>(line + 1);
+                symbol.documentation = preceding_python_comment(original, line);
+                symbol.signature_hash = fnv1a(symbol.signature);
+                symbol.body_hash = symbol.signature_hash;
+                result.symbols.push_back(std::move(symbol));
+            }
+        }
+        line = end_line;
+    }
+    return result;
+}
+
 std::string mask_c_family(const std::string& source) {
     std::string masked = source;
     enum class State { Code, LineComment, BlockComment, Single, Double };
@@ -1135,11 +1500,19 @@ const char* language_name(Language language) {
         case Language::Toml: return "TOML";
         case Language::Yaml: return "YAML";
         case Language::Ini: return "INI";
+        case Language::Ainiux: return "Ainiux";
     }
     return "Unknown";
 }
 
 bool language_for_path(const std::string& path, Language& language) {
+    const std::string extension =
+        ascii_lower(std::filesystem::u8path(path).extension().u8string());
+    // Index-only until the highlighter grows an Ainiux mode.
+    if (extension == ".ax") {
+        language = Language::Ainiux;
+        return true;
+    }
     switch (highlight::detect_language(path)) {
         case highlight::Language::Markdown: language = Language::Markdown; return true;
         case highlight::Language::Python: language = Language::Python; return true;
@@ -1239,7 +1612,7 @@ Visibility symbol_visibility(const Symbol& symbol, Language language,
         contains_word(declaration, "pub"))
         return Visibility::Public;
 
-    if (language == Language::Python) {
+    if (language == Language::Python || language == Language::Ainiux) {
         return !symbol.name.empty() && symbol.name.front() == '_' &&
                        !(symbol.name.size() > 1 && symbol.name[1] == '_')
                    ? Visibility::Private
@@ -1321,6 +1694,7 @@ ScanResult scan_source(const std::string& path, const std::string& source, Langu
         case Language::Html: result = scan_html(source); break;
         case Language::HtmlOnly: result = scan_html(source, false); break;
         case Language::Css: result = scan_css(source); break;
+        case Language::Ainiux: result = scan_ainiux(source); break;
     }
     assign_importance(source, result);
     return result;

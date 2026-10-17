@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "agent/index/index.hpp"
+#include "highlight/highlight.hpp"
 #include "support/test_support.hpp"
 
 namespace ainiux::test::agent_index {
@@ -174,6 +175,84 @@ void test_python_scanner() {
         if (symbol.qualified_name == "Widget") documented = symbol.documentation == "A useful widget.";
     }
     check(documented, "Python scanner captures docstrings");
+}
+
+void test_ainiux_scanner() {
+    Language language = Language::Python;
+    check(ainiux::agent::index::language_for_path("module.ax", language) &&
+              language == Language::Ainiux,
+          "code index detects .ax as Ainiux");
+    check(ainiux::agent::index::language_for_path("MODULE.AX", language) &&
+              language == Language::Ainiux,
+          "code index detects .AX case-insensitively");
+    check(ainiux::highlight::detect_language("module.ax") ==
+              ainiux::highlight::Language::Text,
+          "highlighter still treats .ax as plain text");
+
+    const std::string source =
+        "\"\"\"Example module.\"\"\"\n"
+        "COUNT = 3\n"
+        "count: int = 3\n"
+        "fake = \"fn hidden() { return 1 }\"\n"
+        "inc = x => x + 1\n"
+        "fn braces() -> int { \"\"\"Brace suite.\"\"\"; 1 }\n"
+        "fn indentation() -> int:\n"
+        "    \"\"\"Indent suite.\"\"\"\n"
+        "    local = 2\n"
+        "    local\n"
+        "fn inline() -> int: \"\"\"Inline suite.\"\"\"; 3\n"
+        "fn square(value: int) -> int = value * value\n"
+        "struct Point(x: int, y: int = 0)\n"
+        "enum Status {\n"
+        "    placed\n"
+        "    cancelled = 90\n"
+        "}\n"
+        "class Animal {\n"
+        "    \"\"\"A named base instance.\"\"\"\n"
+        "    name: str\n"
+        "    fn init(name: str) { this.name = name }\n"
+        "    fn speak() -> str = \"...\"\n"
+        "    fn _secret() -> str { \"hidden\" }\n"
+        "}\n";
+    const ScanResult scan =
+        ainiux::agent::index::scan_source("sample.ax", source, Language::Ainiux);
+    check(scan.language == Language::Ainiux, "Ainiux scanner labels the language");
+    check(has_symbol(scan, "constant", "COUNT") && has_symbol(scan, "global", "count"),
+          "Ainiux scanner finds module bindings: " + symbol_summary(scan));
+    check(has_symbol(scan, "global", "inc"), "Ainiux scanner indexes lambda assignment as a global");
+    check(has_symbol(scan, "function", "braces") && has_symbol(scan, "function", "indentation") &&
+              has_symbol(scan, "function", "inline") && has_symbol(scan, "function", "square"),
+          "Ainiux scanner finds brace, indent, inline, and expression functions");
+    check(has_symbol(scan, "struct", "Point") && has_symbol(scan, "enum", "Status"),
+          "Ainiux scanner finds struct and enum types");
+    check(!has_symbol(scan, "global", "Status::cancelled") &&
+              !has_symbol(scan, "constant", "cancelled") &&
+              !has_symbol(scan, "global", "cancelled"),
+          "Ainiux scanner skips enum members");
+    check(has_symbol(scan, "class", "Animal") && has_symbol(scan, "field", "Animal::name") &&
+              has_symbol(scan, "method", "Animal::init") &&
+              has_symbol(scan, "method", "Animal::speak") &&
+              has_symbol(scan, "method", "Animal::_secret"),
+          "Ainiux scanner finds class fields and methods");
+    check(!has_symbol(scan, "function", "hidden") &&
+              !has_symbol(scan, "global", "indentation::local") &&
+              !has_symbol(scan, "global", "local"),
+          "Ainiux scanner ignores strings and function locals");
+    const auto* square = find_symbol(scan, "function", "square");
+    check(square != nullptr && square->parameters.find("value") != std::string::npos &&
+              square->return_type == "int",
+          "Ainiux scanner captures parameters and return type");
+    const auto* animal = find_symbol(scan, "class", "Animal");
+    check(animal != nullptr && animal->documentation == "A named base instance.",
+          "Ainiux scanner captures class docstrings");
+    const auto* braces = find_symbol(scan, "function", "braces");
+    check(braces != nullptr && braces->documentation == "Brace suite.",
+          "Ainiux scanner captures brace-body docstrings");
+    const auto* indented = find_symbol(scan, "function", "indentation");
+    check(indented != nullptr && indented->documentation == "Indent suite.",
+          "Ainiux scanner captures indented docstrings");
+    check(importance_of(scan, "Animal") > importance_of(scan, "Animal::_secret"),
+          "Ainiux private methods score below the enclosing class");
 }
 
 void test_c_scanner() {
@@ -403,6 +482,9 @@ void test_all_editor_language_detection() {
               "code index matches editor language detection for " + item.first);
     }
     Language detected = Language::Python;
+    check(ainiux::agent::index::language_for_path("module.AX", detected) &&
+              detected == Language::Ainiux,
+          "code index detects Ainiux .ax independently of the editor highlighter");
     check(!ainiux::agent::index::language_for_path("notes.txt", detected),
           "code index continues to exclude editor plain-text files");
     for (const char* path : {"data.json", "events.jsonl", "map.geojson", "config.json5",
@@ -1216,6 +1298,7 @@ void test_workspace_discovery_includes_unknown_types() {
     write_file(root / ".gitignore", "ignored.ax\n");
     write_file(root / "keep.py", "def keep():\n    return 1\n");
     write_file(root / "notes.ax", "print(1)\n");
+    write_file(root / "notes.txt", "plain\n");
     write_file(root / "ignored.ax", "print(2)\n");
     write_file(root / "build" / "skip.ax", "print(3)\n");
     write_file(root / ".hidden" / "secret.ax", "print(4)\n");
@@ -1225,32 +1308,41 @@ void test_workspace_discovery_includes_unknown_types() {
     check(ainiux::agent::index::discover_source_files(options, source_files).ok(),
           "source discovery succeeds");
     bool source_has_ax = false;
+    bool source_has_ignored_ax = false;
     bool source_has_py = false;
+    bool source_has_txt = false;
     for (const auto& file : source_files) {
-        source_has_ax =
-            source_has_ax ||
-            (file.path.size() >= 3 &&
-             file.path.compare(file.path.size() - 3, 3, ".ax") == 0);
+        source_has_ax = source_has_ax || file.path == "notes.ax";
+        source_has_ignored_ax = source_has_ignored_ax || file.path == "ignored.ax" ||
+                                file.path == "build/skip.ax" ||
+                                file.path == ".hidden/secret.ax";
         source_has_py = source_has_py || file.path == "keep.py";
+        source_has_txt = source_has_txt || file.path == "notes.txt";
+        if (file.path == "notes.ax") {
+            check(file.language == Language::Ainiux,
+                  "source discovery labels .ax as Ainiux");
+        }
     }
-    check(source_has_py && !source_has_ax,
-          "source discovery still requires a known language");
+    check(source_has_py && source_has_ax && !source_has_ignored_ax && !source_has_txt,
+          "source discovery indexes .ax and still requires a known language");
 
     std::vector<ainiux::agent::index::WorkspaceFile> workspace_files;
     check(ainiux::agent::index::discover_workspace_files(options, workspace_files)
               .ok(),
           "workspace discovery succeeds");
     bool found_ax = false;
+    bool found_txt = false;
     bool found_ignored = false;
     bool found_py = false;
     for (const auto& file : workspace_files) {
         found_ax = found_ax || file.path == "notes.ax";
+        found_txt = found_txt || file.path == "notes.txt";
         found_py = found_py || file.path == "keep.py";
         found_ignored = found_ignored || file.path == "ignored.ax" ||
                         file.path == "build/skip.ax" ||
                         file.path == ".hidden/secret.ax";
     }
-    check(found_ax && found_py && !found_ignored,
+    check(found_ax && found_txt && found_py && !found_ignored,
           "workspace discovery includes unknown types and honors ignores");
     std::error_code cleanup;
     fs::remove_all(root, cleanup);
@@ -1260,6 +1352,7 @@ void test_workspace_discovery_includes_unknown_types() {
 
 void run_all() {
     test_python_scanner();
+    test_ainiux_scanner();
     test_c_scanner();
     test_cpp_header_detection();
     test_javascript_scanner();

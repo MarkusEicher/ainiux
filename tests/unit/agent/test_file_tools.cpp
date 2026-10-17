@@ -875,8 +875,7 @@ void test_glob_grep_find_any_file_type() {
               json_array_contains_string(ax_glob, "tests/golden/pr1/hello.ax") &&
               !json_array_contains_string(ax_glob, "ignored.ax") &&
               !json_array_contains_string(ax_glob, "build/skip.ax"),
-          "glob finds unknown extensions on the live tree and honors ignores: " +
-              ax_glob);
+          "glob finds .ax on the live tree and honors ignores: " + ax_glob);
     const std::string txt_glob =
         tools.execute("glob", R"JSON({"pattern":"*.txt"})JSON");
     check(json_ok(txt_glob) && json_array_contains_string(txt_glob, "notes.txt"),
@@ -889,20 +888,24 @@ void test_glob_grep_find_any_file_type() {
               ax_grep.find("ax-live-needle") != std::string::npos &&
               ax_grep.find("ignored.ax") == std::string::npos &&
               ax_grep.find("build/skip.ax") == std::string::npos,
-          "grep searches unknown extensions without using the code index: " +
-              ax_grep);
+          "grep searches .ax on the live tree: " + ax_grep);
     const std::string golden_grep = tools.execute(
         "grep",
         R"JSON({"query":"ax-golden-needle","path":"tests/golden","glob":"*.ax"})JSON");
     check(json_ok(golden_grep) &&
               golden_grep.find("tests/golden/pr1/hello.ax") != std::string::npos,
-          "grep path+glob finds nested unknown-type files: " + golden_grep);
+          "grep path+glob finds nested .ax files: " + golden_grep);
 
     const std::string overview = tools.execute("index", "{}");
-    check(json_ok(overview) && overview.find("notes.ax") == std::string::npos,
+    check(json_ok(overview) && overview.find("\"Ainiux\"") != std::string::npos,
+          "index overview includes the Ainiux language: " + overview);
+    check(json_ok(tools.execute(
+              "outline", R"JSON({"path":"notes.ax"})JSON")),
+          "outline indexes Ainiux .ax files");
+    check(json_ok(overview) && overview.find("notes.txt") == std::string::npos,
           "index overview stays language-index based: " + overview);
     check(!json_ok(tools.execute(
-              "outline", R"JSON({"path":"notes.ax"})JSON")),
+              "outline", R"JSON({"path":"notes.txt"})JSON")),
           "outline stays index-only and rejects unknown types");
 
     std::error_code ec;

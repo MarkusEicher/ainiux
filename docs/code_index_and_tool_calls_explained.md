@@ -1,6 +1,6 @@
 # Code index database and tool calls
 
-Internal reference for what Ainiux stores in the project code index and how agent tools use it (or fall back without it). Based on `src/agent/index/` and `src/agent/tools.cpp` as of the v1.1 definitions-only index (schema version **4**, scanner version **6**).
+Internal reference for what Ainiux stores in the project code index and how agent tools use it (or fall back without it). Based on `src/agent/index/` and `src/agent/tools.cpp` as of the v1.1 definitions-only index (schema version **4**, scanner version **7**).
 
 This is a navigation aid for humans and agents optimizing the index. User-facing behavior is in [Agent workflows](agent.md); architecture constraints live in [AGENTS.md](../AGENTS.md) and [Decisions](decisions.md).
 
@@ -33,7 +33,7 @@ Three tables only: `metadata`, `files`, `symbols`.
 | Key | Purpose |
 | --- | --- |
 | `schema_version` | Currently `4` |
-| `scanner_version` | Currently `6` |
+| `scanner_version` | Currently `7` |
 | `ignore_fingerprint` | Detect root ignore-rule changes |
 | `max_source_code_file_size` | Size bound used when indexed |
 | `workspace` | Absolute workspace root |

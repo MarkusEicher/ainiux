@@ -37,6 +37,7 @@
 ## Syntax Highlighting
 
 - Add startup and `/theme` warnings for explicit low-contrast user syntax colors while preserving those overrides.
+- Add Ainiux (`.ax`) highlighting in `src/highlight/` and WebUI `syntax-v4.js` (keywords, `f`/`r`/`b` strings, `=>`/`|>`/`..` operators, Markdown fence `ainiux`/`ax`), then a hybrid brace+indent reformat profile so TUI/WebUI Tab/Enter/Reformat follow the three suite spellings. The code index already treats `.ax` as Ainiux. Corpus: `tests/highlight/ainiux_file.ax`.
 
 ## Editor AI Commands
 

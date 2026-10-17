@@ -248,6 +248,7 @@ Language parse_language(const std::string& value) {
     if (value == "TOML") return Language::Toml;
     if (value == "YAML") return Language::Yaml;
     if (value == "INI") return Language::Ini;
+    if (value == "Ainiux") return Language::Ainiux;
     return Language::Python;
 }
 
