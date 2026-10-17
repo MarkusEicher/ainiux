@@ -2886,6 +2886,15 @@ void test_editor_language_reformatting() {
     check(ainiux::editor::reformat_indentation(tab_request).replacement ==
               "if (ready) {\n\tvalue();\n}",
           "language reformat honors literal-tab indentation style");
+    ReformatRequest ainiux_tab_request;
+    ainiux_tab_request.content = "fn f() {\nvalue\n}";
+    ainiux_tab_request.language = Language::Ainiux;
+    ainiux_tab_request.tab_style = ainiux::editor::TabStyle::Tab;
+    ainiux_tab_request.first_line = 0;
+    ainiux_tab_request.last_line = 2;
+    check(ainiux::editor::reformat_indentation(ainiux_tab_request).replacement ==
+              "fn f() {\n    value\n}",
+          "Ainiux reformat forces spaces even when the buffer tab style is tab");
 
     struct ReformatCase {
         Language language;
@@ -2926,6 +2935,9 @@ void test_editor_language_reformatting() {
         {Language::Ini,
          "[section]\n      value=yes",
          "[section]\n    value=yes"},
+        {Language::Ainiux,
+         "fn braces() -> int {\nvalue\n}\nfn indent() -> int:\nvalue\nif ready: launch()\nnext()",
+         "fn braces() -> int {\n    value\n}\nfn indent() -> int:\n    value\nif ready: launch()\nnext()"},
     };
     for (const ReformatCase& test : cases) {
         ReformatRequest request;
@@ -5746,6 +5758,7 @@ void test_editor_markdown_mode_and_structured_highlighting() {
 
     const std::vector<std::pair<const char*, ainiux::highlight::Language>> detected_modes = {
         {"new.py", ainiux::highlight::Language::Python},
+        {"new.ax", ainiux::highlight::Language::Ainiux},
         {"new.c", ainiux::highlight::Language::C},
         {"new.hpp", ainiux::highlight::Language::Cpp},
         {"new.cs", ainiux::highlight::Language::CSharp},

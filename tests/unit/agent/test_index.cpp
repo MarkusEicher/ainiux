@@ -186,8 +186,8 @@ void test_ainiux_scanner() {
               language == Language::Ainiux,
           "code index detects .AX case-insensitively");
     check(ainiux::highlight::detect_language("module.ax") ==
-              ainiux::highlight::Language::Text,
-          "highlighter still treats .ax as plain text");
+              ainiux::highlight::Language::Ainiux,
+          "highlighter detects .ax as Ainiux");
 
     const std::string source =
         "\"\"\"Example module.\"\"\"\n"
@@ -474,7 +474,7 @@ void test_all_editor_language_detection() {
         {"module.GO", Language::Go},              {"module.PS1", Language::PowerShell},
         {"module.S", Language::Assembly},         {"schema.SQL", Language::Sql},
         {"config.TOML", Language::Toml},          {"config.YML", Language::Yaml},
-        {"config.INI", Language::Ini},
+        {"config.INI", Language::Ini},            {"module.AX", Language::Ainiux},
     };
     for (const auto& item : cases) {
         Language detected = Language::Python;
@@ -484,7 +484,7 @@ void test_all_editor_language_detection() {
     Language detected = Language::Python;
     check(ainiux::agent::index::language_for_path("module.AX", detected) &&
               detected == Language::Ainiux,
-          "code index detects Ainiux .ax independently of the editor highlighter");
+          "code index detects Ainiux .ax through the editor highlighter");
     check(!ainiux::agent::index::language_for_path("notes.txt", detected),
           "code index continues to exclude editor plain-text files");
     for (const char* path : {"data.json", "events.jsonl", "map.geojson", "config.json5",

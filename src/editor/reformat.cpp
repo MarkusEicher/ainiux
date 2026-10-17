@@ -15,6 +15,7 @@ namespace {
 enum class Profile {
     Unsupported,
     Brace,
+    Hybrid,
     Ruby,
     Bash,
     Markup,
@@ -56,6 +57,8 @@ Profile profile_for(highlight::Language language) {
         case Language::Toml:
         case Language::Ini:
             return Profile::Topology;
+        case Language::Ainiux:
+            return Profile::Hybrid;
         case Language::Assembly:
             return Profile::Assembly;
         case Language::Text:
@@ -187,6 +190,14 @@ size_t leading_closers(const std::string& code) {
     return count;
 }
 
+bool opens_colon_suite(const std::string& code) {
+    size_t end = code.size();
+    while (end > 0 && (code[end - 1] == ' ' || code[end - 1] == '\t')) {
+        --end;
+    }
+    return end > 0 && code[end - 1] == ':';
+}
+
 void brace_counts(const std::string& code, size_t& opens, size_t& closes) {
     opens = 0;
     closes = 0;
@@ -280,6 +291,8 @@ struct StructuralState {
     size_t embedded_depth = 0;
     std::vector<size_t> topology_columns{0};
     bool topology_initialized = false;
+    std::vector<size_t> colon_columns;
+    bool pending_colon_body = false;
 };
 
 size_t topology_depth(StructuralState& state, size_t column) {
@@ -308,6 +321,19 @@ size_t desired_depth(Profile profile,
                      size_t tab_width,
                      bool& middle_branch) {
     middle_branch = false;
+    if (profile == Profile::Hybrid) {
+        const size_t column = leading_column(original, tab_width);
+        if (state.pending_colon_body) {
+            state.pending_colon_body = false;
+        } else {
+            while (!state.colon_columns.empty() && column <= state.colon_columns.back()) {
+                state.colon_columns.pop_back();
+            }
+        }
+        const size_t closers = leading_closers(code);
+        const size_t brace_part = state.depth >= closers ? state.depth - closers : 0;
+        return brace_part + state.colon_columns.size();
+    }
     if (profile == Profile::Topology) {
         return topology_depth(state, leading_column(original, tab_width));
     }
@@ -366,8 +392,21 @@ size_t desired_depth(Profile profile,
 void advance_state(Profile profile,
                    const std::string& code,
                    StructuralState& state,
-                   bool middle_branch) {
+                   bool middle_branch,
+                   size_t tab_width = 4) {
     if (profile == Profile::Topology || profile == Profile::Assembly) {
+        return;
+    }
+    if (profile == Profile::Hybrid) {
+        size_t opens = 0;
+        size_t closes = 0;
+        brace_counts(code, opens, closes);
+        state.depth = opens >= closes ? state.depth + (opens - closes)
+                                     : (state.depth >= closes - opens ? state.depth - (closes - opens) : 0);
+        if (opens_colon_suite(code)) {
+            state.colon_columns.push_back(leading_column(code, tab_width));
+            state.pending_colon_body = true;
+        }
         return;
     }
     if (profile == Profile::Brace) {
@@ -494,7 +533,8 @@ ReformatResult reformat_indentation(const ReformatRequest& request,
                                                      middle_branch);
             const bool preserve = protected_multiline(incoming) || classification_unsafe;
             if (line_index >= request.first_line && !preserve) {
-                const bool force_spaces = request.language == highlight::Language::Yaml;
+                const bool force_spaces = request.language == highlight::Language::Yaml ||
+                                          request.language == highlight::Language::Ainiux;
                 std::string replacement_indent =
                     indentation(depth, request.tab_width, request.tab_style, force_spaces);
                 formatted[line_index] = std::move(replacement_indent) + line.substr(leading_bytes(line));
@@ -513,7 +553,7 @@ ReformatResult reformat_indentation(const ReformatRequest& request,
                 if (profile == Profile::Markup) {
                     structural.embedded_depth = 0;
                 }
-                advance_state(profile, code, structural, middle_branch);
+                advance_state(profile, code, structural, middle_branch, request.tab_width);
             }
         }
 

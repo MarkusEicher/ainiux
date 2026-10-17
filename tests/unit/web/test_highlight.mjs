@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { renderMarkdown } from "../../../src/web/js/highlight-v5.js";
+import { renderMarkdown } from "../../../src/web/js/highlight-v6.js";
 import {
   appendHighlightedCode,
   canonicalLanguage,
   languageForPath,
-} from "../../../src/web/js/syntax-v4.js";
+} from "../../../src/web/js/syntax-v5.js";
 
 class FakeNode {
   constructor(type, name = "", value = "") {
@@ -69,7 +69,7 @@ function syntaxText(root, role) {
 test("recognizes every TUI fence language and compatibility alias", () => {
   const aliases = {
     text: ["text", "txt", "plain", "plaintext"],
-    markdown: ["markdown", "md"], python: ["python", "py"], c: ["c"],
+    markdown: ["markdown", "md"], python: ["python", "py"], ainiux: ["ainiux", "ax"], c: ["c"],
     cpp: ["cpp", "c++", "cxx"], csharp: ["csharp", "c#", "cs"], java: ["java"],
     javascript: ["javascript", "js"], typescript: ["typescript", "ts"],
     html: ["html", "html5", "html-multi", "htmlmulti"],
@@ -88,6 +88,7 @@ test("recognizes every TUI fence language and compatibility alias", () => {
 test("detects source languages for workspace file names", () => {
   const paths = {
     "main.js": "javascript", "component.tsx": "typescript", "server.py": "python",
+    "module.ax": "ainiux",
     "header.hpp": "cpp", "Main.java": "java", "index.html": "html", "site.css": "css",
     "data.jsonl": "json", "run.sh": "bash", "tool.ps1": "powershell", "lib.rs": "rust",
     "cmd.go": "go", "query.sql": "sql", "config.toml": "toml", ".editorconfig": "ini",
@@ -213,6 +214,21 @@ test("highlights JavaScript and TypeScript fences with TUI semantic roles", () =
   assert.ok(syntaxText(typescript, "type").includes("User"));
   assert.ok(syntaxText(typescript, "type").includes("boolean"));
   assert.ok(syntaxText(typescript, "literal").includes("true"));
+});
+
+test("highlights Ainiux fences", () => {
+  const ainiux = render("```ax\nfn greet(name: str) -> str { f\"Hi {name}\" } # note\nvalue = nil\n```");
+  assert.ok(syntaxText(ainiux, "keyword").includes("fn"));
+  assert.ok(syntaxText(ainiux, "function").includes("greet"));
+  assert.ok(syntaxText(ainiux, "type").includes("str"));
+  assert.ok(syntaxText(ainiux, "string").includes("f\"Hi {name}\""));
+  assert.ok(syntaxText(ainiux, "literal").includes("nil"));
+  assert.ok(syntaxText(ainiux, "comment").includes("# note"));
+
+  const division = render("```ainiux\nx = 7 // 2  # divide\n```");
+  assert.ok(syntaxText(division, "operator").join("").includes("//"));
+  assert.ok(syntaxText(division, "comment").includes("# divide"));
+  assert.ok(!syntaxText(division, "comment").some((text) => text.includes("//")));
 });
 
 test("highlights Python, C, and C++ fences", () => {

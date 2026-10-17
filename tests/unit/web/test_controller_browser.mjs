@@ -10,7 +10,7 @@ import { spawn } from "node:child_process";
 
 test("questionnaire dialog is accessible and rendered without HTML injection", async () => {
   const index = await readFile(new URL("../../../src/web/index.html", import.meta.url), "utf8");
-  const script = await readFile(new URL("../../../src/web/js/app-v38.js", import.meta.url), "utf8");
+  const script = await readFile(new URL("../../../src/web/js/app-v39.js", import.meta.url), "utf8");
   for (const id of ["questionnaire-dialog", "questionnaire-content",
     "questionnaire-previous", "questionnaire-next", "questionnaire-submit",
     "questionnaire-decline"]) assert.match(index, new RegExp(`id="${id}"`));
@@ -33,7 +33,7 @@ test("questionnaire dialog is accessible and rendered without HTML injection", a
 });
 
 test("agent composer intercepts /statistics without posting a turn", async () => {
-  const script = await readFile(new URL("../../../src/web/js/app-v38.js", import.meta.url), "utf8");
+  const script = await readFile(new URL("../../../src/web/js/app-v39.js", import.meta.url), "utf8");
   assert.match(script, /function parseAgentStatisticsCommand/);
   assert.match(script, /Usage: \/statistics/);
   assert.match(script, /sessions\/\$\{encodeURIComponent\(sessionId\)\}\/statistics/);
@@ -87,7 +87,7 @@ test("web controller selectors, per-thread saves, workspace settings and history
   const assets = new Map();
   const index = await readFile(new URL("../../../src/web/index.html", import.meta.url), "utf8");
   assets.set("/ui/", ["text/html", index]);
-  for (const name of ["app-v38.js", "history-window-v1.js", "selector-v3.js", "highlight-v5.js", "syntax-v4.js", "image-options-v1.js", "video-options-v3.js", "editor-history-v2.js", "editor-indentation-v1.js", "app-v28.css"]) {
+  for (const name of ["app-v39.js", "history-window-v1.js", "selector-v3.js", "highlight-v6.js", "syntax-v5.js", "image-options-v1.js", "video-options-v3.js", "editor-history-v2.js", "editor-indentation-v2.js", "app-v28.css"]) {
     assets.set(`/ui/assets/${name}`, [name.endsWith("css") ? "text/css" : "text/javascript",
       await readFile(new URL(`../../../src/web/${name.endsWith("css") ? "css" : "js"}/${name}`, import.meta.url))]);
   }

@@ -3,10 +3,10 @@ import test from "node:test";
 
 import {
   detectIndentation, indentEditorSnapshot, outdentEditorSnapshot, reformatEditorSnapshot,
-} from "../../../src/web/js/editor-indentation-v1.js";
+} from "../../../src/web/js/editor-indentation-v2.js";
 import { createEditorHistory, recordEditorChange, undoEditorChange } from
   "../../../src/web/js/editor-history-v2.js";
-import { analyzeStructuralLine } from "../../../src/web/js/syntax-v4.js";
+import { analyzeStructuralLine } from "../../../src/web/js/syntax-v5.js";
 
 const snapshot = (value, selectionStart = 0, selectionEnd = selectionStart,
   selectionDirection = "none") => ({ value, selectionStart, selectionEnd, selectionDirection });
@@ -75,6 +75,8 @@ test("reformat ports every native language profile", () => {
       "BEGIN\n    SELECT CASE\n        WHEN ready THEN value\n    END\nEND"],
     ["python", "if ready:\n      call()\n        nested()\nnext_call()",
       "if ready:\n    call()\n        nested()\nnext_call()"],
+    ["ainiux", "fn braces() -> int {\nvalue\n}\nfn indent() -> int:\nvalue\nif ready: launch()\nnext()",
+      "fn braces() -> int {\n    value\n}\nfn indent() -> int:\n    value\nif ready: launch()\nnext()"],
     ["yaml", "root:\n\tchild:\n\t\tvalue: yes", "root:\n    child:\n        value: yes"],
     ["markdown", "root\n  child\n    nested", "root\n    child\n        nested"],
     ["toml", "[table]\n      value = 1", "[table]\n    value = 1"],
@@ -87,6 +89,8 @@ test("reformat ports every native language profile", () => {
   }
   assert.equal(reformatEditorSnapshot(snapshot("if (x) {\ny();\n}"), "cpp", 4, "tab").value,
     "if (x) {\n\ty();\n}");
+  assert.equal(reformatEditorSnapshot(snapshot("fn f() {\nvalue\n}"), "ainiux", 4, "tab").value,
+    "fn f() {\n    value\n}", "ainiux forces spaces");
 });
 
 test("reformat ignores lexical structure and preserves protected multiline regions", () => {

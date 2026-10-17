@@ -315,7 +315,7 @@ Chat user/assistant prose and Agent user/response prose use the embedded
 dependency-free Markdown renderer, including while a response streams. It
 supports headings, paragraphs and hard breaks, emphasis, lists, blockquotes,
 rules, inline/fenced code, and GFM tables. Fences receive TUI-role-compatible
-client-side coloring for Markdown, Python, C/C++, C#, Java,
+client-side coloring for Markdown, Python, Ainiux, C/C++, C#, Java,
 JavaScript/TypeScript, HTML/HTML-only, CSS, XML, JSON, Bash, PHP, Perl, Ruby,
 Rust, Go, PowerShell, Assembly, SQL, TOML, YAML, and INI. HTML composes the
 markup, CSS, and JavaScript lexers for style/script element bodies and inline

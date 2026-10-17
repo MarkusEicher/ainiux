@@ -43,7 +43,9 @@ bool has_emphasis_role(const std::vector<Span>& spans) {
 void test_mode_parsing_and_detection() {
     const std::vector<std::pair<const char*, Language>> aliases = {
         {"text", Language::Text},       {"markdown", Language::Markdown}, {"MD", Language::Markdown},
-        {"python", Language::Python},  {"py", Language::Python},         {"c", Language::C},
+        {"python", Language::Python},  {"py", Language::Python},
+        {"ainiux", Language::Ainiux},  {"ax", Language::Ainiux},         {"AX", Language::Ainiux},
+        {"c", Language::C},
         {"cpp", Language::Cpp},        {"c++", Language::Cpp},           {"cxx", Language::Cpp},
         {"csharp", Language::CSharp},  {"c#", Language::CSharp},         {"cs", Language::CSharp},
         {"java", Language::Java},      {"javascript", Language::JavaScript},
@@ -74,7 +76,8 @@ void test_mode_parsing_and_detection() {
               std::string(ainiux::highlight::language_name(Language::HtmlOnly)) == "htmlonly",
           "HTML modes expose their canonical names");
     const std::vector<std::pair<Language, const char*>> canonical_names = {
-        {Language::Php, "php"},           {Language::Perl, "perl"},
+        {Language::Ainiux, "ainiux"},     {Language::Php, "php"},
+        {Language::Perl, "perl"},
         {Language::Ruby, "ruby"},         {Language::Rust, "rust"},
         {Language::Go, "go"},             {Language::PowerShell, "powershell"},
         {Language::Assembly, "assembly"}, {Language::Sql, "sql"},
@@ -90,6 +93,7 @@ void test_mode_parsing_and_detection() {
         {"README.md", Language::Markdown}, {"notes.MARKDOWN", Language::Markdown},
         {"draft.mdown", Language::Markdown}, {"doc.MKD", Language::Markdown},
         {"script.py", Language::Python}, {"window.pyw", Language::Python}, {"types.PYI", Language::Python},
+        {"module.ax", Language::Ainiux}, {"MODULE.AX", Language::Ainiux},
         {"source.c", Language::C}, {"header.h", Language::C},
         {"source.cc", Language::Cpp}, {"source.cpp", Language::Cpp}, {"source.cxx", Language::Cpp},
         {"source.c++", Language::Cpp}, {"header.hh", Language::Cpp}, {"header.hpp", Language::Cpp},
@@ -140,6 +144,14 @@ void test_programming_language_roles() {
     const std::vector<Fixture> fixtures = {
         {Language::Python, "def greet(name: str = None): # note", {TokenRole::Keyword, TokenRole::Function,
              TokenRole::Type, TokenRole::Literal, TokenRole::Comment}, "Python"},
+        {Language::Ainiux, "fn greet(name: str) -> str: # note", {TokenRole::Keyword, TokenRole::Function,
+             TokenRole::Type, TokenRole::Comment}, "Ainiux"},
+        {Language::Ainiux, "print(f\"{name}\") xs |> map(x => x) 0..3", {TokenRole::String,
+             TokenRole::Operator, TokenRole::Function, TokenRole::Number}, "Ainiux operators"},
+        {Language::Ainiux, "x = 7 // 2  # divide", {TokenRole::Number, TokenRole::Operator,
+             TokenRole::Comment}, "Ainiux integer division"},
+        {Language::Ainiux, "value = true if ready: launch()", {TokenRole::Literal, TokenRole::Keyword,
+             TokenRole::Function}, "Ainiux one-liner"},
         {Language::C, "#define N 17", {TokenRole::Preprocessor}, "C preprocessor"},
         {Language::C, "const char *s = \"return\"; /* note */", {TokenRole::Keyword, TokenRole::Type,
              TokenRole::String, TokenRole::Comment}, "C"},
@@ -201,6 +213,13 @@ void test_programming_language_roles() {
                   std::string(fixture.name) + " emits requested semantic token role");
         }
     }
+
+    const std::string ax_div = "x = 7 // 2  # divide";
+    const auto ainiux_div = ainiux::highlight::highlight_line(Language::Ainiux, ax_div);
+    check(has_role_at(ainiux_div.spans, ax_div.find("//"), TokenRole::Operator) &&
+              !has_role_at(ainiux_div.spans, ax_div.find("//"), TokenRole::Comment) &&
+              has_role_at(ainiux_div.spans, ax_div.find('#'), TokenRole::Comment),
+          "Ainiux treats // as integer division and # as the line comment");
 
     const std::string c_line = "const char *text = \"return 123\";";
     const auto c = ainiux::highlight::highlight_line(Language::C, c_line);
@@ -289,6 +308,14 @@ void test_multiline_language_states() {
           "Python triple strings preserve multiline lexical state");
     check(has_role(python[3].spans, TokenRole::Function),
           "Python highlighting resumes after a triple string");
+
+    const auto ax_triples = ainiux::highlight::highlight_document(
+        Language::Ainiux, "value = \"\"\"open\nreturn 17\n\"\"\"\nprint(value)");
+    check(ax_triples.size() == 4 && ax_triples[1].spans.size() == 1 &&
+              ax_triples[1].spans[0].role == TokenRole::String,
+          "Ainiux triple strings preserve multiline lexical state");
+    check(has_role(ax_triples[3].spans, TokenRole::Function),
+          "Ainiux highlighting resumes after a triple string");
 
     const auto bash = ainiux::highlight::highlight_document(
         Language::Bash, "cat <<EOF\nreturn $HOME\nEOF\necho done");
@@ -590,6 +617,13 @@ void test_markdown_multiline_state_and_precedence() {
               has_role(tagged[1].spans, TokenRole::Function) &&
               has_role(tagged[1].spans, TokenRole::Type),
           "Markdown delegates known fenced language aliases to their highlighter");
+    const auto ainiux_fence = ainiux::highlight::highlight_document(
+        Language::Markdown, "```ax\nfn greet() -> str { \"ok\" }\n```");
+    check(ainiux_fence.size() == 3 && has_role(ainiux_fence[1].spans, TokenRole::Keyword) &&
+              has_role(ainiux_fence[1].spans, TokenRole::Function) &&
+              has_role(ainiux_fence[1].spans, TokenRole::Type) &&
+              has_role(ainiux_fence[1].spans, TokenRole::String),
+          "Markdown delegates ainiux/ax fences to the Ainiux highlighter");
     check(has_role(tagged[2].spans, TokenRole::Literal),
           "Markdown fenced highlighter retains embedded language state");
     check(tagged[5].spans.empty(), "Markdown leaves unknown tagged fences as plain text");

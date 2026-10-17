@@ -1506,16 +1506,10 @@ const char* language_name(Language language) {
 }
 
 bool language_for_path(const std::string& path, Language& language) {
-    const std::string extension =
-        ascii_lower(std::filesystem::u8path(path).extension().u8string());
-    // Index-only until the highlighter grows an Ainiux mode.
-    if (extension == ".ax") {
-        language = Language::Ainiux;
-        return true;
-    }
     switch (highlight::detect_language(path)) {
         case highlight::Language::Markdown: language = Language::Markdown; return true;
         case highlight::Language::Python: language = Language::Python; return true;
+        case highlight::Language::Ainiux: language = Language::Ainiux; return true;
         case highlight::Language::C: language = Language::C; return true;
         case highlight::Language::Cpp: language = Language::Cpp; return true;
         case highlight::Language::CSharp: language = Language::CSharp; return true;

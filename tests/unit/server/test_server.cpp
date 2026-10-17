@@ -163,7 +163,7 @@ void test_embedded_web_ui_assets_and_browser_security() {
     Response index = route_request(public_get("/ui/"), config, status);
     check(index.status == 200 && index.content_type == "text/html; charset=utf-8" &&
               index.body.find("/ui/assets/app-v28.css") != std::string::npos &&
-              index.body.find("/ui/assets/app-v38.js") != std::string::npos &&
+              index.body.find("/ui/assets/app-v39.js") != std::string::npos &&
               index.body.find(">Logout</button>") != std::string::npos &&
               index.body.find("data-panel=\"image-panel\">Image") != std::string::npos &&
               index.body.find("data-panel=\"video-panel\">Video") != std::string::npos &&
@@ -284,7 +284,7 @@ void test_embedded_web_ui_assets_and_browser_security() {
               stylesheet_headers.find("Cache-Control: no-store") != std::string::npos,
           "embedded WUI CSS carries TUI-derived light/dark themes and responsive accessibility rules");
 
-    Response javascript = route_request(public_get("/ui/assets/app-v38.js"), config, status);
+    Response javascript = route_request(public_get("/ui/assets/app-v39.js"), config, status);
     const std::string javascript_headers = serialize_response(javascript, true);
     check(javascript.status == 200 && javascript.content_type == "text/javascript; charset=utf-8" &&
               javascript.body.find("localStorage") != std::string::npos &&
@@ -350,7 +350,7 @@ void test_embedded_web_ui_assets_and_browser_security() {
               javascript.body.find("function toggleChatThinking") != std::string::npos &&
               javascript.body.find("function toggleChatWebSearch") != std::string::npos &&
               javascript.body.find("function handleThemeCommand") != std::string::npos &&
-              javascript.body.find("import { renderMarkdown } from \"./highlight-v5.js\"") != std::string::npos &&
+              javascript.body.find("import { renderMarkdown } from \"./highlight-v6.js\"") != std::string::npos &&
               javascript.body.find("languageForPath") != std::string::npos &&
               javascript.body.find("event-card") != std::string::npos &&
               javascript.body.find("file-highlight") != std::string::npos &&
@@ -373,7 +373,7 @@ void test_embedded_web_ui_assets_and_browser_security() {
               javascript.body.find("./video-options-v3.js") != std::string::npos &&
               javascript.body.find("video-input-row") != std::string::npos &&
               javascript.body.find("./editor-history-v2.js") != std::string::npos &&
-              javascript.body.find("./editor-indentation-v1.js") != std::string::npos &&
+              javascript.body.find("./editor-indentation-v2.js") != std::string::npos &&
               javascript.body.find("reformatEditorSnapshot") != std::string::npos &&
               javascript.body.find("editorHistoryDirection(event)") != std::string::npos &&
               javascript.body.find("event.inputType === \"historyUndo\"") != std::string::npos &&
@@ -425,7 +425,7 @@ void test_embedded_web_ui_assets_and_browser_security() {
               editor_history_headers.find("script-src 'self'") != std::string::npos,
           "embedded WUI editor history provides bounded undo, redo, and shortcut handling");
 
-    Response highlighter = route_request(public_get("/ui/assets/highlight-v5.js"), config, status);
+    Response highlighter = route_request(public_get("/ui/assets/highlight-v6.js"), config, status);
     const std::string highlighter_headers = serialize_response(highlighter, true);
     check(highlighter.status == 200 &&
               highlighter.content_type == "text/javascript; charset=utf-8" &&
@@ -444,7 +444,7 @@ void test_embedded_web_ui_assets_and_browser_security() {
               highlighter_headers.find("script-src 'self'") != std::string::npos,
           "embedded WUI Markdown module builds safe semantic DOM under immutable CSP headers");
 
-    Response syntax = route_request(public_get("/ui/assets/syntax-v4.js"), config, status);
+    Response syntax = route_request(public_get("/ui/assets/syntax-v5.js"), config, status);
     const std::string syntax_headers = serialize_response(syntax, true);
     check(syntax.status == 200 &&
               syntax.content_type == "text/javascript; charset=utf-8" &&
@@ -455,6 +455,7 @@ void test_embedded_web_ui_assets_and_browser_security() {
               syntax.body.find("javascript: \"javascript\"") != std::string::npos &&
               syntax.body.find("typescript: \"typescript\"") != std::string::npos &&
               syntax.body.find("python: \"python\"") != std::string::npos &&
+              syntax.body.find("ainiux: \"ainiux\"") != std::string::npos &&
               syntax.body.find("powershell: \"powershell\"") != std::string::npos &&
               syntax.body.find("assembly: \"assembly\"") != std::string::npos &&
               syntax.body.find("innerHTML") == std::string::npos &&
@@ -466,7 +467,7 @@ void test_embedded_web_ui_assets_and_browser_security() {
           "embedded WUI syntax module is dependency-free, DOM-safe, and immutable");
 
     Response indentation =
-        route_request(public_get("/ui/assets/editor-indentation-v1.js"), config, status);
+        route_request(public_get("/ui/assets/editor-indentation-v2.js"), config, status);
     const std::string indentation_headers = serialize_response(indentation, true);
     check(indentation.status == 200 &&
               indentation.content_type == "text/javascript; charset=utf-8" &&
@@ -572,7 +573,11 @@ void test_embedded_web_ui_assets_and_browser_security() {
               route_request(public_get("/ui/assets/video-options-v1.js"), config, status).status == 404 &&
               route_request(public_get("/ui/assets/video-options-v2.js"), config, status).status == 404 &&
               route_request(public_get("/ui/assets/highlight-v4.js"), config, status).status == 404 &&
-              route_request(public_get("/ui/assets/syntax-v3.js"), config, status).status == 404,
+              route_request(public_get("/ui/assets/syntax-v3.js"), config, status).status == 404 &&
+              route_request(public_get("/ui/assets/syntax-v4.js"), config, status).status == 404 &&
+              route_request(public_get("/ui/assets/highlight-v5.js"), config, status).status == 404 &&
+              route_request(public_get("/ui/assets/app-v38.js"), config, status).status == 404 &&
+              route_request(public_get("/ui/assets/editor-indentation-v1.js"), config, status).status == 404,
           "the first-batch WUI syntax assets are superseded after full language parity");
     check(route_request(public_get("/ui/assets/app-v33.js"), config, status).status == 404,
           "the pre-CSRF WUI controller asset is superseded");

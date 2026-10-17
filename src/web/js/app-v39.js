@@ -1,10 +1,10 @@
 import { historyLineLimit, historyWindow } from "./history-window-v1.js";
-import { renderMarkdown } from "./highlight-v5.js";
+import { renderMarkdown } from "./highlight-v6.js";
 import { createSelector } from "./selector-v3.js";
-import { appendHighlightedCode, languageForPath } from "./syntax-v4.js";
+import { appendHighlightedCode, languageForPath } from "./syntax-v5.js";
 import {
   detectIndentation, indentEditorSnapshot, outdentEditorSnapshot, reformatEditorSnapshot,
-} from "./editor-indentation-v1.js";
+} from "./editor-indentation-v2.js";
 import {
   normalizeImageCatalog, selectImageModel, imageFileError, customDimensionError,
   resetImageFormValues,

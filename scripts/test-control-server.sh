@@ -170,11 +170,11 @@ FULL_AUTH=(--header "Authorization: Bearer ${FULL_SECRET}")
 MCP_AUTH=(--header "Authorization: Bearer ${MCP_SECRET}")
 
 request 200 "public embedded WUI index" "${BASE_URL}/ui/"
-expect_body '/ui/assets/app-v26.css' "WUI stylesheet reference"
-expect_body '/ui/assets/app-v35.js' "WUI JavaScript reference"
+expect_body '/ui/assets/app-v28.css' "WUI stylesheet reference"
+expect_body '/ui/assets/app-v39.js' "WUI JavaScript reference"
 WUI_HEADERS="${TEMP_DIR}/wui-headers.txt"
 request 200 "versioned WUI JavaScript" --dump-header "${WUI_HEADERS}" \
-    "${BASE_URL}/ui/assets/app-v35.js"
+    "${BASE_URL}/ui/assets/app-v39.js"
 expect_body 'localStorage' "persistent browser token storage"
 expect_body 'X-Ainiux-CSRF-Token' "browser CSRF protection"
 expect_body 'Invalid authentication' "invalid browser authentication state"
@@ -189,14 +189,14 @@ grep -Fq "Content-Security-Policy: default-src 'none'; script-src 'self'" "${WUI
 grep -Fq 'Referrer-Policy: no-referrer' "${WUI_HEADERS}" || \
     die "WUI response did not disable referrer disclosure"
 request 200 "versioned WUI Markdown renderer" --dump-header "${WUI_HEADERS}" \
-    "${BASE_URL}/ui/assets/highlight-v5.js"
+    "${BASE_URL}/ui/assets/highlight-v6.js"
 expect_body 'export function renderMarkdown' "client-side Markdown renderer"
 expect_body 'createDocumentFragment' "safe Markdown DOM construction"
 expect_body 'noopener noreferrer' "safe Markdown link navigation"
 grep -Fq 'Cache-Control: no-store' "${WUI_HEADERS}" || \
     die "versioned WUI Markdown asset did not disable caching"
 request 200 "versioned WUI programming-language highlighter" --dump-header "${WUI_HEADERS}" \
-    "${BASE_URL}/ui/assets/syntax-v4.js"
+    "${BASE_URL}/ui/assets/syntax-v5.js"
 expect_body 'appendHighlightedCode' "client-side programming-language highlighter"
 expect_body 'javascript' "JavaScript fence support"
 expect_body 'scanHtml' "HTML embedded-language support"
@@ -210,13 +210,13 @@ request 200 "versioned WUI video option module" \
     "${BASE_URL}/ui/assets/video-options-v3.js"
 expect_body 'normalizeVideoCatalog' "config-driven video option module"
 request 200 "versioned WUI editor indentation module" --dump-header "${WUI_HEADERS}" \
-    "${BASE_URL}/ui/assets/editor-indentation-v1.js"
+    "${BASE_URL}/ui/assets/editor-indentation-v2.js"
 expect_body 'reformatEditorSnapshot' "adaptive browser editor reformatting"
 grep -Fq 'Cache-Control: no-store' "${WUI_HEADERS}" || \
     die "versioned WUI indentation asset did not disable caching"
 request 404 "WUI directory serving rejection" "${BASE_URL}/ui/assets/"
-request 404 "superseded WUI JavaScript rejection" "${BASE_URL}/ui/assets/app-v33.js"
-request 404 "superseded WUI syntax rejection" "${BASE_URL}/ui/assets/syntax-v3.js"
+request 404 "superseded WUI JavaScript rejection" "${BASE_URL}/ui/assets/app-v38.js"
+request 404 "superseded WUI syntax rejection" "${BASE_URL}/ui/assets/syntax-v4.js"
 
 request 200 "authenticated health" "${FULL_AUTH[@]}" "${BASE_URL}/ainiux/v1/health"
 if [ "$(cat "${RESPONSE_FILE}")" != '{"status":"ok"}' ]; then

@@ -371,7 +371,7 @@ It follows the system light/dark preference and also has an explicit theme
 selector. Chat and Agent prose is rendered as safe client-side Markdown with
 semantic headings, responsive tables, TUI-derived syntax colors, and explicit
 clickable HTTP(S) links. Fenced code supports the full TUI language set:
-Markdown, Python, C/C++, C#, Java, JavaScript/TypeScript, HTML/HTML-only, CSS,
+Markdown, Python, Ainiux, C/C++, C#, Java, JavaScript/TypeScript, HTML/HTML-only, CSS,
 XML, JSON, Bash, PHP, Perl, Ruby, Rust, Go, PowerShell, Assembly, SQL, TOML,
 YAML, and INI. HTML fences also highlight embedded script/style bodies and
 inline event/style attributes. Agent thinking, tool calls, notices, approvals,

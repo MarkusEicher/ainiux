@@ -7,6 +7,7 @@ const LANGUAGE_ALIASES = new Map(Object.entries({
   javascript: "javascript", js: "javascript", jsx: "javascript", node: "javascript",
   typescript: "typescript", ts: "typescript", tsx: "typescript",
   python: "python", py: "python", python3: "python",
+  ainiux: "ainiux", ax: "ainiux",
   c: "c", h: "c",
   cpp: "cpp", "c++": "cpp", cxx: "cpp", cc: "cpp", hpp: "cpp", hxx: "cpp",
   html: "html", html5: "html", htm: "html", "html-multi": "html", htmlmulti: "html",
@@ -36,7 +37,7 @@ const LANGUAGE_ALIASES = new Map(Object.entries({
 // returned value is always a canonical language understood by this module.
 const PATH_LANGUAGE_EXTENSIONS = new Map(Object.entries({
   ".md": "markdown", ".markdown": "markdown", ".mdown": "markdown", ".mkd": "markdown",
-  ".py": "python", ".pyw": "python", ".pyi": "python",
+  ".py": "python", ".pyw": "python", ".pyi": "python", ".ax": "ainiux",
   ".c": "c", ".h": "c", ".cc": "cpp", ".cpp": "cpp", ".cxx": "cpp", ".c++": "cpp",
   ".hh": "cpp", ".hpp": "cpp", ".hxx": "cpp", ".h++": "cpp", ".ipp": "cpp", ".tpp": "cpp", ".inl": "cpp",
   ".cs": "csharp", ".java": "java",
@@ -65,6 +66,7 @@ const KEYWORDS = {
   javascript: words("async await break case catch class const continue debugger default delete do else export extends finally for from function get if import in instanceof let new of return set static super switch this throw try typeof var void while with yield"),
   typescript: words("abstract as asserts async await break case catch class const constructor continue debugger declare default delete do else enum export extends finally for from function get if implements import in infer instanceof interface is keyof let module namespace new of override private protected public readonly return satisfies set static super switch this throw try type typeof var void while with yield"),
   python: words("and as assert async await break case class continue def del elif else except finally for from global if import in is lambda match nonlocal not or pass raise return try while with yield"),
+  ainiux: words("with fn struct class static this super if elif else for in while break continue return match import from try catch raise yield and or not par spawn defer enum is pass assert"),
   c: words("auto break case const continue default do else enum extern for goto if inline register restrict return sizeof static struct switch typedef union volatile while _Alignas _Alignof _Atomic _Generic _Noreturn _Static_assert _Thread_local"),
   cpp: words("alignas alignof and and_eq asm auto bitand bitor break case catch class compl concept const consteval constexpr constinit const_cast continue co_await co_return co_yield decltype default delete do dynamic_cast else enum explicit export extern for friend goto if inline mutable namespace new noexcept not not_eq operator or or_eq private protected public register reinterpret_cast requires return sizeof static static_assert static_cast struct switch template this thread_local throw try typedef typeid typename union using virtual volatile while xor xor_eq"),
   bash: words("case coproc do done elif else esac fi for function if in select then time until while declare export local readonly return set source typeset unset"),
@@ -85,6 +87,7 @@ const TYPES = {
   javascript: new Set(),
   typescript: words("any bigint boolean never number object string symbol unknown void"),
   python: words("bool bytes complex dict float frozenset int list memoryview object range set str tuple type"),
+  ainiux: words("int fp bool str bytes any range Result Done"),
   c: words("bool char double float int long short signed unsigned void size_t ptrdiff_t int8_t int16_t int32_t int64_t uint8_t uint16_t uint32_t uint64_t"),
   cpp: words("bool char char8_t char16_t char32_t double float int long short signed unsigned void wchar_t size_t nullptr_t"),
   bash: new Set(),
@@ -105,6 +108,7 @@ const LITERALS = {
   javascript: words("true false null undefined NaN Infinity"),
   typescript: words("true false null undefined NaN Infinity"),
   python: words("True False None NotImplemented"),
+  ainiux: words("true false nil done inf nan"),
   c: words("true false null NULL"),
   cpp: words("true false null nullptr NULL"),
   bash: new Set(),
@@ -163,11 +167,19 @@ function token(tokens, start, end, role) {
   if (end > start && tokens.length < MAX_TOKENS) tokens.push({ start, end, role });
 }
 
-function numberEnd(line, start) {
+function numberEnd(line, start, language = "") {
   let end = start + 1;
-  while (end < line.length && /[A-Za-z0-9_.]/.test(line[end])) end += 1;
+  while (end < line.length) {
+    if (language === "ainiux" && line[end] === "." && line[end + 1] === ".") break;
+    if (!/[A-Za-z0-9_.]/.test(line[end])) break;
+    end += 1;
+  }
   if (end < line.length && /[+-]/.test(line[end]) && /[eEpP]/.test(line[end - 1])) end += 1;
-  while (end < line.length && /[A-Za-z0-9_.]/.test(line[end])) end += 1;
+  while (end < line.length) {
+    if (language === "ainiux" && line[end] === "." && line[end + 1] === ".") break;
+    if (!/[A-Za-z0-9_.]/.test(line[end])) break;
+    end += 1;
+  }
   return end;
 }
 
@@ -419,7 +431,7 @@ function scanCLike(line, language, previous = {}) {
   return { tokens, state };
 }
 
-function scanPython(line, previous = {}) {
+function scanPython(line, previous = {}, language = "python") {
   const tokens = [];
   const state = { ...previous };
   let position = 0;
@@ -473,13 +485,15 @@ function scanPython(line, previous = {}) {
       const start = position++;
       while (position < line.length && isIdentifierPart(line[position])) position += 1;
       const value = line.slice(start, position);
-      const role = classifyWord("python", line, start, position, declaration);
+      const role = classifyWord(language, line, start, position, declaration);
       if (role) token(tokens, start, position, role);
-      declaration = value === "def" ? "function" : value === "class" ? "type" : "";
+      declaration = value === "def" || value === "fn" ? "function" :
+        value === "class" || value === "struct" || value === "enum" ? "type" :
+        value === "static" ? declaration : "";
       continue;
     }
     if (/\d/.test(line[position]) || (line[position] === "." && /\d/.test(line[position + 1] || ""))) {
-      const end = numberEnd(line, position);
+      const end = numberEnd(line, position, language);
       token(tokens, position, end, "number");
       position = end;
       continue;
@@ -1492,7 +1506,7 @@ function scanHtml(line, previous = {}, embeddedLanguages = true) {
 function scanLine(line, language, state) {
   if (language === "text") return { tokens: [], state: {} };
   if (language === "markdown") return scanMarkdown(line, state);
-  if (language === "python") return scanPython(line, state);
+  if (language === "python" || language === "ainiux") return scanPython(line, state, language);
   if (language === "bash") return scanBash(line, state);
   if (language === "json") return scanJson(line, state);
   if (language === "php") return scanPhp(line, state);

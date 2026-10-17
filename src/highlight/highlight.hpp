@@ -10,6 +10,7 @@ enum class Language {
     Text,
     Markdown,
     Python,
+    Ainiux,
     C,
     Cpp,
     CSharp,

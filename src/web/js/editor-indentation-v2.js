@@ -1,4 +1,4 @@
-import { analyzeStructuralLine, canonicalLanguage } from "./syntax-v4.js";
+import { analyzeStructuralLine, canonicalLanguage } from "./syntax-v5.js";
 
 const MAX_TAB_WIDTH = 32;
 const DETECTION_LINES = 20;
@@ -271,6 +271,7 @@ const BRACE_LANGUAGES = new Set([
   "perl", "rust", "go", "powershell",
 ]);
 const TOPOLOGY_LANGUAGES = new Set(["python", "yaml", "markdown", "toml", "ini"]);
+const HYBRID_LANGUAGES = new Set(["ainiux"]);
 const RUBY_CLOSERS = new Set(["end", "else", "elsif", "when", "rescue", "ensure"]);
 const RUBY_MIDDLES = new Set(["else", "elsif", "when", "rescue", "ensure"]);
 const BASH_CLOSERS = new Set(["fi", "done", "esac", "else", "elif"]);
@@ -284,6 +285,7 @@ const SQL_OPENERS = new Set(["begin", "case", "loop"]);
 
 function profileFor(language) {
   if (BRACE_LANGUAGES.has(language)) return "brace";
+  if (HYBRID_LANGUAGES.has(language)) return "hybrid";
   if (language === "ruby" || language === "bash" || language === "sql") return language;
   if (["html", "htmlonly", "xml"].includes(language)) return "markup";
   if (TOPOLOGY_LANGUAGES.has(language)) return "topology";
@@ -367,7 +369,22 @@ function topologyDepth(structural, column) {
   return structural.topologyColumns.length - 1;
 }
 
+function opensColonSuite(code) {
+  return /:\s*$/.test(code);
+}
+
 function desiredDepth(profile, original, code, structural, tabWidth) {
+  if (profile === "hybrid") {
+    const column = leadingColumn(original, tabWidth);
+    if (structural.pendingColonBody) structural.pendingColonBody = false;
+    else {
+      while (structural.colonColumns.length && column <= structural.colonColumns.at(-1)) {
+        structural.colonColumns.pop();
+      }
+    }
+    const bracePart = Math.max(0, structural.depth - leadingClosers(code));
+    return { depth: bracePart + structural.colonColumns.length, middle: false };
+  }
   if (profile === "topology") return { depth: topologyDepth(structural, leadingColumn(original, tabWidth)), middle: false };
   if (profile === "assembly") {
     const start = leadingBytes(code);
@@ -390,8 +407,17 @@ function desiredDepth(profile, original, code, structural, tabWidth) {
     middle: middles.has(tokens[0]) };
 }
 
-function advanceState(profile, code, structural, middle) {
+function advanceState(profile, code, structural, middle, tabWidth = 4) {
   if (profile === "topology" || profile === "assembly") return;
+  if (profile === "hybrid") {
+    const { opens, closes } = braceCounts(code);
+    structural.depth = Math.max(0, structural.depth + opens - closes);
+    if (opensColonSuite(code)) {
+      structural.colonColumns.push(leadingColumn(code, tabWidth));
+      structural.pendingColonBody = true;
+    }
+    return;
+  }
   if (profile === "brace") {
     const { opens, closes } = braceCounts(code);
     structural.depth = Math.max(0, structural.depth + opens - closes);
@@ -440,7 +466,8 @@ export function reformatEditorSnapshot(value, languageLabel, tabWidth = 4, tabSt
   const selected = current.selectionStart !== current.selectionEnd;
   const range = selected ? selectedLineRange(current, lines) : { first: 0, last: lines.length - 1 };
   const formatted = lines.map((line) => line.text);
-  const structural = { depth: 0, embeddedDepth: 0, topologyColumns: [0], topologyInitialized: false };
+  const structural = { depth: 0, embeddedDepth: 0, topologyColumns: [0], topologyInitialized: false,
+    colonColumns: [], pendingColonBody: false };
   let lexical = {};
   let classificationUnsafe = false;
   let warnedLimited = false;
@@ -466,7 +493,7 @@ export function reformatEditorSnapshot(value, languageLabel, tabWidth = 4, tabSt
       middle = desired.middle;
     }
     if (index >= range.first && !analysis.protectedRegion && !classificationUnsafe) {
-      const indent = language === "yaml" || normalizedStyle === "spaces"
+      const indent = language === "yaml" || language === "ainiux" || normalizedStyle === "spaces"
         ? " ".repeat(depth * normalizedWidth) : "\t".repeat(depth);
       formatted[index] = indent + original.slice(leadingBytes(original));
     }
@@ -475,7 +502,7 @@ export function reformatEditorSnapshot(value, languageLabel, tabWidth = 4, tabSt
       structural.embeddedDepth = Math.max(0, structural.embeddedDepth + opens - closes);
     } else {
       if (profile === "markup") structural.embeddedDepth = 0;
-      advanceState(profile, code, structural, middle);
+      advanceState(profile, code, structural, middle, normalizedWidth);
     }
   }
   const valueText = lines.map((line, index) => formatted[index] + line.ending).join("");

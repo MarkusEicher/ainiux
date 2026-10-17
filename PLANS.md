@@ -139,10 +139,10 @@ mutations immediately update the live touched-file view, persistent publication 
 atomic, cancellation preserves the previous completed database, and live filesystem,
 compiler, and test verification remain available.
 
-Ainiux `.ax` is indexed as a definitions-only language (scanner version 7). Syntax
-highlighting, editor indent/reformat, and WebUI coloring for `.ax` remain a later
-slice; the editor still treats `.ax` as `text`. The highlight corpus includes
-`tests/highlight/ainiux_file.ax` for that later slice.
+Ainiux `.ax` is a first-class editor language: the highlighter, hybrid
+brace+colon indent profile, and WebUI syntax module treat `.ax` as `ainiux`.
+The code index maps that same detector (scanner version 7). Corpus:
+`tests/highlight/ainiux_file.ax`.
 
 Do not add compiler-grade parsers, language-server dependencies, reference/call
 graphs, or automatic request-context hints. Security review keeps its immutable

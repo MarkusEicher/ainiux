@@ -584,6 +584,11 @@ const std::unordered_set<std::string>& keywords_for(Language language) {
         "def", "del", "elif", "else", "except", "finally", "for", "from", "global",
         "if", "import", "in", "is", "lambda", "match", "nonlocal", "not", "or", "pass",
         "raise", "return", "try", "while", "with", "yield"};
+    static const std::unordered_set<std::string> ainiux = {
+        "with", "fn", "struct", "class", "static", "this", "super", "if", "elif", "else", "for",
+        "in", "while", "break", "continue", "return", "match", "import", "from", "try", "catch",
+        "raise", "yield", "and", "or", "not", "par", "spawn", "defer", "enum", "is", "pass",
+        "assert"};
     static const std::unordered_set<std::string> c = {
         "auto", "break", "case", "const", "continue", "default", "do", "else", "enum",
         "extern", "for", "goto", "if", "inline", "register", "restrict", "return", "sizeof",
@@ -691,6 +696,7 @@ const std::unordered_set<std::string>& keywords_for(Language language) {
         "update", "using", "values", "view", "when", "where", "window", "with"};
     switch (language) {
         case Language::Python: return python;
+        case Language::Ainiux: return ainiux;
         case Language::C: return c;
         case Language::Cpp: return cpp;
         case Language::CSharp: return csharp;
@@ -715,6 +721,8 @@ const std::unordered_set<std::string>& types_for(Language language) {
     static const std::unordered_set<std::string> python = {
         "bool", "bytes", "complex", "dict", "float", "frozenset", "int", "list", "memoryview",
         "object", "range", "set", "str", "tuple", "type", "None"};
+    static const std::unordered_set<std::string> ainiux = {
+        "int", "fp", "bool", "str", "bytes", "any", "range", "Result", "Done"};
     static const std::unordered_set<std::string> c = {
         "bool", "char", "double", "float", "int", "long", "short", "signed", "unsigned", "void",
         "size_t", "ptrdiff_t", "int8_t", "int16_t", "int32_t", "int64_t", "uint8_t", "uint16_t",
@@ -760,6 +768,7 @@ const std::unordered_set<std::string>& types_for(Language language) {
         "text", "time", "timestamp", "uuid", "varchar"};
     switch (language) {
         case Language::Python: return python;
+        case Language::Ainiux: return ainiux;
         case Language::C: return c;
         case Language::Cpp: return cpp;
         case Language::CSharp: return csharp;
@@ -779,6 +788,10 @@ const std::unordered_set<std::string>& types_for(Language language) {
 bool is_literal_word(Language language, const std::string& word) {
     if (language == Language::Python) {
         return word == "True" || word == "False" || word == "None" || word == "NotImplemented";
+    }
+    if (language == Language::Ainiux) {
+        return word == "true" || word == "false" || word == "nil" || word == "done" ||
+               word == "inf" || word == "nan";
     }
     if (language == Language::Json) {
         return word == "true" || word == "false" || word == "null" || word == "Infinity" ||
@@ -819,6 +832,7 @@ void add_words_numbers_operators(Language language,
     const auto& keywords = keywords_for(language);
     const auto& types = types_for(language);
     size_t pos = 0;
+    std::string declaration;
     while (pos < line.size()) {
         if (ascii_identifier_start(line[pos])) {
             const size_t start = pos++;
@@ -833,11 +847,24 @@ void add_words_numbers_operators(Language language,
                 append_candidate(words, start, pos, TokenRole::Keyword);
             } else if (types.find(lookup) != types.end()) {
                 append_candidate(words, start, pos, TokenRole::Type);
+            } else if (language == Language::Ainiux && declaration == "function") {
+                append_candidate(lower, start, pos, TokenRole::Function);
+            } else if (language == Language::Ainiux && declaration == "type") {
+                append_candidate(words, start, pos, TokenRole::Type);
             } else {
                 const size_t after = skip_ascii_space(line, pos);
                 if (after < line.size() &&
                     (line[after] == '(' || (language == Language::Rust && line[after] == '!'))) {
                     append_candidate(lower, start, pos, TokenRole::Function);
+                }
+            }
+            if (language == Language::Ainiux) {
+                if (word == "fn") {
+                    declaration = "function";
+                } else if (word == "class" || word == "struct" || word == "enum") {
+                    declaration = "type";
+                } else if (word != "static") {
+                    declaration.clear();
                 }
             }
             continue;
@@ -848,6 +875,10 @@ void add_words_numbers_operators(Language language,
             const size_t start = pos++;
             while (pos < line.size()) {
                 const char ch = line[pos];
+                if (language == Language::Ainiux && ch == '.' && pos + 1 < line.size() &&
+                    line[pos + 1] == '.') {
+                    break;
+                }
                 if (std::isalnum(static_cast<unsigned char>(ch)) != 0 || ch == '.' || ch == '_') {
                     ++pos;
                 } else if ((ch == '+' || ch == '-') && pos > start &&
@@ -1059,6 +1090,81 @@ void scan_python_lexical(const std::string& line,
             append_candidate(high_priority, pos, end, TokenRole::String);
             pos = end;
             continue;
+        }
+        ++pos;
+    }
+}
+
+bool ainiux_string_prefix_length(const std::string& line, size_t pos, size_t& prefix_length) {
+    prefix_length = 0;
+    if (pos > 0 && ascii_identifier_part(line[pos - 1])) {
+        return false;
+    }
+    while (prefix_length < 3 && pos + prefix_length < line.size()) {
+        const char ch = line[pos + prefix_length];
+        if (ch != 'f' && ch != 'F' && ch != 'r' && ch != 'R' && ch != 'b' && ch != 'B') {
+            break;
+        }
+        ++prefix_length;
+    }
+    if (pos + prefix_length >= line.size()) {
+        prefix_length = 0;
+        return false;
+    }
+    const char quote = line[pos + prefix_length];
+    if (quote != '\'' && quote != '"') {
+        prefix_length = 0;
+        return false;
+    }
+    return true;
+}
+
+void scan_ainiux_lexical(const std::string& line,
+                         LineState& next_state,
+                         std::vector<Candidate>& high_priority) {
+    size_t pos = 0;
+    if (next_state.block == LineState::Block::TripleSingleString ||
+        next_state.block == LineState::Block::TripleDoubleString) {
+        const std::string delimiter = next_state.block == LineState::Block::TripleSingleString
+                                          ? "'''"
+                                          : "\"\"\"";
+        const size_t close = line.find(delimiter);
+        if (close == std::string::npos) {
+            append_candidate(high_priority, 0, line.size(), TokenRole::String);
+            return;
+        }
+        append_candidate(high_priority, 0, close + 3, TokenRole::String);
+        next_state.block = LineState::Block::None;
+        pos = close + 3;
+    }
+    while (pos < line.size()) {
+        if (line[pos] == '#') {
+            append_candidate(high_priority, pos, line.size(), TokenRole::Comment);
+            return;
+        }
+        size_t prefix_length = 0;
+        if (ainiux_string_prefix_length(line, pos, prefix_length) || line[pos] == '\'' ||
+            line[pos] == '"') {
+            const size_t quote_pos = pos + prefix_length;
+            if (line.compare(quote_pos, 3, "'''") == 0 || line.compare(quote_pos, 3, "\"\"\"") == 0) {
+                const std::string delimiter = line.substr(quote_pos, 3);
+                const size_t close = line.find(delimiter, quote_pos + 3);
+                if (close == std::string::npos) {
+                    append_candidate(high_priority, pos, line.size(), TokenRole::String);
+                    next_state.block = delimiter[0] == '\'' ? LineState::Block::TripleSingleString
+                                                             : LineState::Block::TripleDoubleString;
+                    return;
+                }
+                append_candidate(high_priority, pos, close + 3, TokenRole::String);
+                pos = close + 3;
+                continue;
+            }
+            if (quote_pos < line.size() && (line[quote_pos] == '\'' || line[quote_pos] == '"')) {
+                const size_t end = quoted_end(line, quote_pos, line[quote_pos]);
+                append_candidate(high_priority, pos, end, TokenRole::String);
+                pos = end;
+                continue;
+            }
         }
         ++pos;
     }
@@ -2411,6 +2517,8 @@ HighlightedLine highlight_code(Language language,
     std::vector<Candidate> lower;
     if (language == Language::Python) {
         scan_python_lexical(line, result.next_state, high_priority);
+    } else if (language == Language::Ainiux) {
+        scan_ainiux_lexical(line, result.next_state, high_priority);
     } else if (language == Language::Bash) {
         scan_bash_lexical(line, result.next_state, high_priority, structural, lower);
     } else if (language == Language::Php) {
@@ -2512,6 +2620,8 @@ const char* language_name(Language language) {
             return "markdown";
         case Language::Python:
             return "python";
+        case Language::Ainiux:
+            return "ainiux";
         case Language::C:
             return "c";
         case Language::Cpp:
@@ -2574,6 +2684,10 @@ bool parse_language(const std::string& text, Language& language) {
     }
     if (mode == "python" || mode == "py") {
         language = Language::Python;
+        return true;
+    }
+    if (mode == "ainiux" || mode == "ax") {
+        language = Language::Ainiux;
         return true;
     }
     if (mode == "c") {
@@ -2684,6 +2798,7 @@ Language detect_language(const std::string& path) {
         return Language::Markdown;
     }
     if (extension == ".py" || extension == ".pyw" || extension == ".pyi") return Language::Python;
+    if (extension == ".ax") return Language::Ainiux;
     if (extension == ".c" || extension == ".h") return Language::C;
     if (extension == ".cc" || extension == ".cpp" || extension == ".cxx" ||
         extension == ".c++" || extension == ".hh" || extension == ".hpp" ||
