@@ -2,7 +2,10 @@
 #include "support/test_support.hpp"
 
 #include "chat/session.hpp"
+#include "agent/skills.hpp"
 #include "editor/editor.hpp"
+#include "platform/environment.hpp"
+#include "platform/filesystem.hpp"
 #include "provider/provider.hpp"
 
 #include <cstdlib>
@@ -216,6 +219,54 @@ void test_enospc_editor_save() {
           "ENOSPC mock blocks atomic editor DOCX output after in-memory conversion");
 }
 
+#if !defined(_WIN32)
+void test_enospc_skill_update() {
+    namespace fs = std::filesystem;
+    struct Fixture {
+        std::optional<std::string> home = test_environment("HOME");
+        std::optional<std::string> mock = test_environment("AINIUX_MOCK_ENOSPC");
+        fs::path root;
+        ~Fixture() {
+            if (home) set_test_environment("HOME", *home);
+            else unset_test_environment("HOME");
+            if (mock) set_test_environment("AINIUX_MOCK_ENOSPC", *mock);
+            else unset_test_environment("AINIUX_MOCK_ENOSPC");
+            std::error_code ec;
+            fs::remove_all(root, ec);
+        }
+    } fixture;
+    std::string suffix;
+    check(platform::secure_random_hex(8, suffix).ok(), "skill fault test creates unique fixture");
+    fixture.root = fs::canonical(fs::temp_directory_path()) / ("ainiux-skill-fault-" + suffix);
+    const fs::path source = fixture.root / "source/demo";
+    fs::create_directories(source);
+    fs::create_directories(fixture.root / "home");
+    set_test_environment("HOME", (fixture.root / "home").u8string());
+    {
+        std::ofstream out(source / "SKILL.md");
+        out << "PREVIOUS GENERATION\n";
+    }
+    std::string installed;
+    check(agent::install_skill(source.u8string(), installed).ok(), "install skill before disk-full fault");
+    unset_test_environment("AINIUX_MOCK_ENOSPC");
+    {
+        std::ofstream out(source / "mock-enospc-asset");
+        out << "new asset\n";
+    }
+    set_test_environment("AINIUX_MOCK_ENOSPC", "1");
+    const Error error = agent::install_skill(source.u8string(), installed);
+    check(error.code == ErrorCode::FileWrite && error.message.find("No space left on device") != std::string::npos,
+          "disk-full skill staging reports actionable write error");
+    const fs::path root = fixture.root / "home/.ainiux/skills";
+    std::string previous;
+    check(platform::read_file_bounded((root / "demo/SKILL.md").u8string(), 1000, previous).ok() &&
+              previous == "PREVIOUS GENERATION\n" && !fs::exists(root / "demo/mock-enospc-asset"),
+          "disk-full update preserves completed skill generation");
+    for (const auto& entry : fs::directory_iterator(root))
+        check(entry.path().filename() == "demo", "disk-full update releases lock and staging directories");
+}
+#endif
+
 }  // namespace
 
 void run_readonly_all() {
@@ -228,6 +279,9 @@ void run_readonly_all() {
 }
 
 void run_enospc_all() {
+#if !defined(_WIN32)
+    test_enospc_skill_update();
+#endif
     test_enospc_chat_save();
     test_enospc_editor_save();
 }

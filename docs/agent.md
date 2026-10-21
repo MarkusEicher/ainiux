@@ -49,6 +49,50 @@ file backups are unaffected; security-review log retention stays separate.
 
 `/setting` opens the same grouped settings widget as chat. Agent-only rows include `thinking_preview_max_chars` and `cmd-out`. `s` writes the project settings file; `q` discards the draft.
 
+## Skills
+
+Terminal and WebUI agents discover `~/.ainiux/skills/NAME/SKILL.md`, then
+`skills/NAME/SKILL.md` at the workspace root. A project skill replaces a user
+skill with the same directory name. Discovery runs when the agent session starts
+or reopens; restart the session after adding or removing skills.
+
+The model receives a sorted catalog of names, descriptions, and locations. It
+reads relevant instructions and supporting text files on demand with
+`skill {"name":"NAME"}` or
+`skill {"name":"NAME","path":"references/guide.md"}`. Relative paths start
+at the skill directory. Links outside it use ordinary workspace tools and their
+permissions. Skill content has the same precedence as project instructions and
+does not grant command execution or extra tool authority.
+
+`SKILL.md` can be plain UTF-8 Markdown. Optional frontmatter can provide a
+single-line `description` (quoted or unquoted); `name` metadata does not override
+the directory name. Other metadata files, including `agents/openai.yaml`, are
+preserved but do not configure Ainiux. Supporting Markdown, scripts, and assets
+are copied intact; scripts execute only through normal agent tools and policy.
+
+```sh
+ainiux --add-skill ./skills/ainiux-code
+ainiux --list-skills
+ainiux --list-skills --format json
+ainiux --remove-skill ainiux-code
+ainiux -a --load-skill ./extra-skills/review
+ainiux -r "Review the parser" --load-skill ./extra-skills/review/SKILL.md
+```
+
+Adding an existing name replaces the user installation after a staged copy.
+Removal affects only the user copy. Management commands require no provider or
+model configuration. One-shot `run` never discovers skills automatically; use
+repeatable `--load-skill PATH` to include selected instructions immediately.
+Explicit selections override automatic copies of the same name; the last explicit
+selection wins. Ordinary chat and editor assist do not load skills.
+
+Skill files are bounded to 256 KiB of valid UTF-8 text without NUL bytes; invalid
+automatic entries warn and are skipped, while invalid explicit selections fail
+before provider requests. Sessions allow up to 256 active skills and 1 MiB of
+explicit instructions. Installation permits up to 64 MiB and 4,096 entries,
+uses private user storage, and rejects symlinks/reparse points and special files.
+The skill reader also rejects traversal, linked paths, and protected agent state.
+
 ## Act, Lead, and Goal
 
 The input chrome shows one of three session states:
@@ -66,7 +110,7 @@ Configure Lead with the same setting vocabulary under `[agent.lead]`; when omitt
 ## Native tools
 
 The current native names are `index`, `ls`, `glob`, `grep`, `symbol`, `outline`,
-`read`, `run`, `fetch`, `web_search`, `ask` (interactive only), `goal_met` (active `/goal` only), `attach`,
+`read`, `skill` (when skills are active), `run`, `fetch`, `web_search`, `ask` (interactive only), `goal_met` (active `/goal` only), `attach`,
 `edit`, `write`, `mkdir`, `mv`, and `rm`. `apply_patch` remains implemented
 for exact-name execute but is not advertised. Availability depends on
 index, network, session, and mutation policy. When `models.conf` marks the current model

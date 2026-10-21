@@ -2285,6 +2285,7 @@ void test_git_and_network_tools_policy() {
     agent::ToolRegistryOptions net_options;
     net_options.mutation_policy = agent::MutationPolicy::Full;
     net_options.allow_network = true;
+    net_options.skills.skills.push_back({"example", "Example skill", workspace, "project", {}});
     net_options.goal_hooks.has_active_goal = [] { return true; };
     net_options.goal_hooks.mark_complete =
         [](const std::string&) { return ok_error(); };
@@ -2307,7 +2308,7 @@ void test_git_and_network_tools_policy() {
                                               net_tools, net_options)
                   .ok(),
               "create network-enabled registry");
-        check_native_descriptor_invariants(net_tools, 19, 18);
+        check_native_descriptor_invariants(net_tools, 20, 19);
 
         const std::string status =
             net_tools.execute("run", R"JSON({"command":"git status --short --branch"})JSON");

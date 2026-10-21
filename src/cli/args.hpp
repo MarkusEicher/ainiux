@@ -29,6 +29,11 @@ struct Options {
     bool version = false;
     bool list_models = false;
     bool list_mcp = false;
+    bool list_skills = false;
+    bool add_skill = false;
+    bool remove_skill = false;
+    std::string skill_target;
+    std::vector<std::string> load_skills;
     bool add_mcp = false;
     bool remove_mcp = false;
     bool enable_mcp = false;

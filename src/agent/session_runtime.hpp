@@ -131,6 +131,7 @@ struct SessionRuntimeOptions {
     bool restore_lane = true;
     bool allow_network = true;  // fetch_url / web_search in agent mode
     bool interactive = false;  // turn-cap can return needs_user_continue
+    std::vector<std::string> load_skills;  // Explicit selections; run never auto-discovers.
     bool enable_session_db = true;
     bool enable_agent_log = true;
     int agent_log_keep_sessions = 1;
@@ -411,6 +412,7 @@ class AgentSessionRuntime {
     AttachmentBag attachment_bag_;
     TrustedPrompts prompts_;
     AgentsMdBundle agents_md_;
+    std::string skills_injection_;
     provider::ToolConversation conversation_;
     AgentLoopState state_;
     struct LaneSnapshot {

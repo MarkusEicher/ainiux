@@ -72,6 +72,9 @@ int run_security_review_mode(provider::RequestContext context);
 bool mcp_manage_requested(const cli::Options& options);
 Error run_mcp_manage(const cli::Options& options, std::ostream& out, std::ostream& err);
 
+bool skill_manage_requested(const cli::Options& options);
+Error run_skill_manage(const cli::Options& options, std::ostream& out, std::ostream& err);
+
 // One-shot headless agent (--run / -r / ainiux run). Writes final answer to stdout.
 int run_agent_mode(provider::RequestContext context);
 

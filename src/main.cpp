@@ -8,6 +8,7 @@
 #include "app/app.hpp"
 #include "app/interactive_mode.hpp"
 #include "agent/project_settings.hpp"
+#include "agent/skills.hpp"
 #include "chat/session.hpp"
 #include "chat/sqlite_store.hpp"
 #include "cli/args.hpp"
@@ -99,6 +100,25 @@ int ainiux_main(int argc, char** argv) {
             return ainiux::app::exit_code_for(mcp_error.code);
         }
         return 0;
+    }
+    if (ainiux::app::skill_manage_requested(parsed.options)) {
+        const ainiux::Error error =
+            ainiux::app::run_skill_manage(parsed.options, std::cout, std::cerr);
+        if (!error.ok()) {
+            ainiux::app::print_error(error);
+            return ainiux::app::exit_code_for(error.code);
+        }
+        return 0;
+    }
+    if (!parsed.options.load_skills.empty()) {
+        // Validate before model selection can issue a provider/model-list request.
+        ainiux::agent::SkillCatalog explicit_skills;
+        const ainiux::Error error = ainiux::agent::load_skills(
+            ".", false, parsed.options.load_skills, explicit_skills);
+        if (!error.ok()) {
+            ainiux::app::print_error(error);
+            return ainiux::app::exit_code_for(error.code);
+        }
     }
     ainiux::config::LoadResult configured = ainiux::config::load_automatic(
         ainiux::cli::Options{}, ainiux::config::process_environment(), !parsed.options.no_config);

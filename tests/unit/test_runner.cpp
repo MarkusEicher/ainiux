@@ -15,6 +15,7 @@
 #include "agent/test_review.hpp"
 #include "agent/test_session_store.hpp"
 #include "agent/test_session_runtime.hpp"
+#include "agent/test_skills.hpp"
 #include "agent/test_project_root.hpp"
 #include "chat/test_chat.hpp"
 #include "cli/test_cli.hpp"
@@ -49,6 +50,12 @@
 
 int main(int argc, char** argv) {
     ainiux::test::pdf::set_runner_path(argv[0]);
+    if (argc == 2 && std::string(argv[1]) == "--skills-only") {
+        ainiux::test::agent_skills::run_all();
+        if (ainiux::test::failures != 0) return 1;
+        std::cout << "Skills tests passed\n";
+        return 0;
+    }
     if (argc == 3 && std::string(argv[1]) == "--docx-case") {
         return ainiux::test::docx::run_case(argv[2]);
     }
@@ -98,7 +105,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (argc != 1) {
-        std::cerr << "Usage: test_runner [--pdf-only | --pdf-case NAME | --docx-only | --docx-case NAME | "
+        std::cerr << "Usage: test_runner [--skills-only | --pdf-only | --pdf-case NAME | --docx-only | --docx-case NAME | "
                      "--xlsx-only | --xlsx-case NAME | --pptx-only | --pptx-case NAME]\n";
         return 2;
     }
@@ -107,6 +114,7 @@ int main(int argc, char** argv) {
     ainiux::test::agent_index::run_all();
     ainiux::test::agent_loop::run_all();
     ainiux::test::agent_agents_md::run_all();
+    ainiux::test::agent_skills::run_all();
     ainiux::test::agent_file_tools::run_all();
     ainiux::test::agent_apply_patch::run_all();
     ainiux::test::agent_session_store::run_all();

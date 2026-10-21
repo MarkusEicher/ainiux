@@ -173,6 +173,17 @@ when neither supplies a window, only the compact estimated token count is shown.
 The lower Agent status strip keeps turn timing and token-throughput details
 without repeating context usage.
 
+## Agent skills
+
+WebUI agent sessions use the same skills catalog as the terminal agent: the
+server account's `~/.ainiux/skills/`, then the fixed workspace's `skills/`.
+Project directory names override matching user skills. The agent reads relevant
+`SKILL.md` instructions and supporting text files on demand; normal tool
+permissions still apply. Manage user copies with `--add-skill`, `--remove-skill`,
+and `--list-skills` on the server host, then reopen the agent session to refresh
+its catalog. Ordinary browser chat and editor assist do not receive skills.
+See [Agent skills](agent.md#skills).
+
 ## Model selection and remembered settings
 
 Chat, Agent, and the Workspace editor show compact provider/model names that

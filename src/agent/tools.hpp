@@ -11,6 +11,7 @@
 #include "agent/approval.hpp"
 #include "agent/attachment_bag.hpp"
 #include "agent/questionnaire.hpp"
+#include "agent/skills.hpp"
 #include "agent/index/index.hpp"
 #include "common.hpp"
 #include "fetch/fetch.hpp"
@@ -89,6 +90,7 @@ struct VisionAttachHooks {
 };
 
 struct ToolRegistryOptions {
+    SkillCatalog skills;
     MutationPolicy mutation_policy = MutationPolicy::Disabled;
     // Network tools reuse src/fetch and src/search. Disabled for security-review.
     bool allow_network = false;
@@ -135,6 +137,7 @@ enum class NativeToolHandler {
     Symbol,
     Outline,
     Read,
+    Skill,
     Run,
     Fetch,
     WebSearch,
@@ -323,6 +326,7 @@ class ReadToolRegistry {
     // forcing security-review call sites off const references.
     mutable index::Snapshot snapshot_;
     std::vector<std::string> secrets_;
+    SkillCatalog skills_;
     mutable std::map<std::string, const index::IndexedFile*> files_;
     std::unique_ptr<IndexRefreshState> index_refresh_;
     mutable std::size_t loaded_index_generation_ = 0;

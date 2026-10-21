@@ -150,7 +150,7 @@ bool tool_result_is_approval_denial(const std::string& result) {
 enum class ToolParallelGroup { Exclusive, Read, Run };
 
 ToolParallelGroup tool_parallel_group(const std::string& name) {
-    if (name == "read" || name == "ls" || name == "glob" || name == "grep" ||
+    if (name == "read" || name == "skill" || name == "ls" || name == "glob" || name == "grep" ||
         name == "fetch" || name == "web_search")
         return ToolParallelGroup::Read;
     if (name == "run") return ToolParallelGroup::Run;

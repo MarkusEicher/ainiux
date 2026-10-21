@@ -145,6 +145,23 @@ portable package, PowerShell, profile paths, and supported console details are i
 
 Related documentation: [documentation index](README.md), [getting started](getting-started.md), [API compatibility](api-compatibility.md), [security](security.md).
 
+## Skill management
+
+`--add-skill FOLDER` copies an entire skill folder containing `SKILL.md` into
+`~/.ainiux/skills/`, replacing an existing copy of the same directory name.
+`--remove-skill NAME` removes only the user installation. `--list-skills` lists
+the effective user/project catalog for the current directory, with locations;
+`--format json` returns `{"skills":[...]}` and `--format ndjson` emits one object
+per skill. Each object contains `name`, `description`, `source`, and `path`.
+These management commands are standalone and need no provider configuration.
+
+Terminal and WebUI agents discover user skills first and workspace `skills/`
+second; project directory names override user names. They read instructions and
+supporting documents when relevant. In terminal Agent or one-shot `run`, repeat
+`--load-skill PATH` to immediately load selected instructions from a directory or
+its `SKILL.md`. One-shot `run` uses only explicit selections. See
+[Agent skills](agent.md#skills) for the format, limits, and permissions.
+
 ## MCP server management
 
 Install and manage Model Context Protocol servers for agent modes (not used by plain chat). Registry: `~/.ainiux/mcp/registry.json`.

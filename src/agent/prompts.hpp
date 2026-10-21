@@ -44,6 +44,7 @@ void seed_agent_conversation(provider::ToolConversation& conversation,
                              ToolProtocol protocol,
                              const std::string& user_goal,
                              const std::string& agents_md_injection = {},
-                             const std::vector<std::string>& project_scripts = {});
+                             const std::vector<std::string>& project_scripts = {},
+                             const std::string& skills_injection = {});
 
 }  // namespace ainiux::agent

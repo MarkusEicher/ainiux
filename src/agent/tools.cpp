@@ -1311,6 +1311,7 @@ Error ReadToolRegistry::create(index::Options index_options,
     loaded.index_options_ = std::move(index_options);
     loaded.snapshot_ = std::move(snapshot);
     loaded.secrets_ = std::move(secrets);
+    loaded.skills_ = std::move(options.skills);
     loaded.mutation_policy_ = options.mutation_policy;
     loaded.allow_network_ = options.allow_network;
     loaded.hosted_web_search_ = options.hosted_web_search;
@@ -3521,6 +3522,13 @@ std::vector<ToolDescriptor> ReadToolRegistry::native_descriptors() const {
                     "\"items\":" +
                     schema(range, "\"path\"") + "}",
                 "")});
+    add(NativeToolHandler::Skill, ToolSafetyCategory::ReadOnly,
+        {"skill",
+         "Read instructions or supporting UTF-8 files from an active skill. name is the "
+         "catalog directory name; path is relative to that skill (default SKILL.md). "
+         "Links outside the skill directory require ordinary workspace tools/permissions.",
+         schema("\"name\":{\"type\":\"string\"},\"path\":{\"type\":\"string\"}",
+                "\"name\"")}, agent_session && !skills_.skills.empty());
     add(NativeToolHandler::Run, ToolSafetyCategory::Execution,
         {"run",
          agent_session
@@ -4178,6 +4186,34 @@ std::string ReadToolRegistry::execute(const std::string& requested_name,
                                      query_error.message);
         merge_index_overlay();
         rebuild_file_map();
+    }
+
+    if (is_handler(NativeToolHandler::Skill)) {
+        if (!descriptor->exposed)
+            return tool_error_result("policy_denied", "no skills are active in this session");
+        std::string skill_name, path;
+        if (!get_string(args, "name", skill_name, true, validation_error) ||
+            !get_string(args, "path", path, false, validation_error))
+            return tool_error_result("invalid_arguments", validation_error);
+        // Installed/discovered skill directories are scoped read capabilities,
+        // not permission to read arbitrary files in the user's home directory.
+        const GuardApprovalDecision decision = request_permission(
+            "skill", "skill " + skill_name, {skill_name, path}, false, false,
+            false, false, "", "", cancellation);
+        if (decision != GuardApprovalDecision::Allow)
+            return tool_error_result(decision == GuardApprovalDecision::Cancelled
+                                         ? "cancelled" : "policy_denied",
+                                     "skill read denied or cancelled");
+        std::string content;
+        const Error error = read_skill_file(skills_, skill_name, path, content, cancellation);
+        if (!error.ok())
+            return tool_error_result(error_code_string(error.code),
+                                     redact_secrets(error.message, secrets_));
+        json::Value data = object_value();
+        data.object["name"] = string_value(skill_name);
+        data.object["path"] = string_value(path.empty() ? "SKILL.md" : path);
+        data.object["content"] = string_value(redact_secrets(content, secrets_));
+        return envelope(true, std::move(data), "", "", {}, false);
     }
 
     if (is_handler(NativeToolHandler::Index)) {

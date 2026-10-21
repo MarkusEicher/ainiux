@@ -205,6 +205,12 @@ ainiux --clear-index
 
 In a measured audit on the current 20-core ARM64 system, 437 files and 11,631 definitions were indexed in 110–149 ms across three cold runs. Repository contents, storage, builds, and hardware vary, so this is a point-in-time measurement rather than a universal performance guarantee.
 
+Terminal and WebUI agents discover skills under `~/.ainiux/skills/` and the
+project's `skills/`, with project names overriding user names. They read relevant
+`SKILL.md` instructions and supporting files on demand. Manage user copies with
+`--add-skill FOLDER`, `--remove-skill NAME`, and `--list-skills`. One-shot `run`
+loads skills only through repeatable `--load-skill PATH`.
+
 See [Agent workflows](docs/agent.md), [MCP servers](docs/mcp.md), [code-index internals](docs/code_index_and_tool_calls_explained.md), and [Security](docs/security.md).
 
 The native tool API is deliberately compact: `index`, `ls`, `glob`, `grep`,

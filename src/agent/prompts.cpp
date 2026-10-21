@@ -142,13 +142,16 @@ void seed_agent_conversation(provider::ToolConversation& conversation,
                              ToolProtocol protocol,
                              const std::string& user_goal,
                              const std::string& agents_md_injection,
-                             const std::vector<std::string>& project_scripts) {
+                             const std::vector<std::string>& project_scripts,
+                             const std::string& skills_injection) {
     conversation = provider::ToolConversation{};
     conversation.messages.push_back({"system", prompts.agent_system_prompt(protocol)});
     // Keep the system prompt static for provider-side caching; project rules are
     // separate user-role context and remain untrusted data.
     if (!agents_md_injection.empty())
         conversation.messages.push_back({"user", agents_md_injection});
+    if (!skills_injection.empty())
+        conversation.messages.push_back({"user", skills_injection});
     conversation.messages.push_back(
         {"user", agent_lane_control(mode, project_scripts)});
     if (!user_goal.empty()) conversation.messages.push_back({"user", user_goal});

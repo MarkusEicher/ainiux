@@ -2,6 +2,18 @@
 
 These records explain implementation rationale. For current usage, start at the [documentation index](README.md).
 
+## Basic agent skills (2026-10-21)
+
+Terminal and WebUI agents share a directory-based skills catalog: user skills
+first, then workspace skills overriding the same directory name. Catalog metadata
+keeps unrelated instruction bodies out of requests; a scoped read-only `skill`
+tool loads instructions and supporting text without expanding ordinary workspace
+file access. Explicit `--load-skill` selections inject instructions immediately;
+one-shot runs do not discover skills automatically. Plain Markdown and simple
+optional description frontmatter require no YAML library. Whole-folder user
+installation uses private staging, serialized management, and rollback before
+discarding the prior generation. Skills grant no additional command authority.
+
 ## Smart command permissions: default allowance (2026-10-12)
 
 Smart allows project commands after structural, Guard and path checks unless an

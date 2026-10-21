@@ -26,7 +26,7 @@ bool needs_value(const std::string& opt) {
         "--provider", "--profile", "--api", "--base-url", "--chat-url", "--models-url", "--responses-url",
         "--key-env", "--key-file", "-k", "--key", "--header", "--connect-timeout", "--timeout",
         "--proxy", "--fetch-url", "--search", "--web-search-provider", "--input", "--encoding",
-        "--attach",
+        "--attach", "--add-skill", "--remove-skill", "--load-skill",
         "--html-file", "--html-format", "--font", "--max-fetch-bytes", "--max-web-search-results",
         "--max-input-bytes", "--max-image-bytes", "--max-context-bytes",
         "--max-agent-response-bytes", "--run-timeout",
@@ -361,6 +361,18 @@ ParseResult parse_args(int argc, char** argv, const Options& base_options) {
             opts.list_models = true;
         } else if (arg == "--list-mcp") {
             opts.list_mcp = true;
+        } else if (arg == "--list-skills") {
+            opts.list_skills = true;
+        } else if (opt == "--add-skill" || opt == "--remove-skill") {
+            if (auto err = take_value()) return {opts, *err};
+            if (value.empty()) return {opts, {ErrorCode::BadArgs, opt + " requires a non-empty value"}};
+            if (opt == "--add-skill") opts.add_skill = true;
+            else opts.remove_skill = true;
+            opts.skill_target = value;
+        } else if (opt == "--load-skill") {
+            if (auto err = take_value()) return {opts, *err};
+            if (value.empty()) return {opts, {ErrorCode::BadArgs, "--load-skill requires a path"}};
+            opts.load_skills.push_back(value);
         } else if (arg == "--add-mcp" || arg == "--install-mcp") {
             opts.add_mcp = true;
             if (auto err = take_value()) return {opts, *err};
@@ -914,6 +926,22 @@ ParseResult parse_args(int argc, char** argv, const Options& base_options) {
         // remembered/configured provider selection. Explicit --provider still wins.
         opts.provider = "openai";
     }
+    const int skill_actions = static_cast<int>(opts.list_skills) +
+                              static_cast<int>(opts.add_skill) + static_cast<int>(opts.remove_skill);
+    if (skill_actions > 1)
+        return {opts, {ErrorCode::BadArgs, "use only one of --list-skills, --add-skill, --remove-skill"}};
+    if (skill_actions &&
+        (opts.agent || opts.agent_run || opts.tui || opts.repl || opts.editor || opts.server ||
+         opts.image || opts.video || opts.list_models || opts.benchmark || opts.grade ||
+         opts.security_review || opts.index_code || opts.print_index || opts.clear_index ||
+         opts.list_mcp || opts.add_mcp || opts.remove_mcp || opts.enable_mcp || opts.disable_mcp ||
+         !opts.prompt.empty() || !opts.prompt_file.empty() || !opts.system.empty() ||
+         !opts.system_file.empty() || !opts.input_path.empty() || !opts.fetch_url.empty() ||
+         !opts.search_query.empty() || !opts.output_path.empty() || !opts.load_skills.empty() ||
+         !opts.attachment_paths.empty() || opts.image_format_explicit || opts.rendered_output_format_explicit))
+        return {opts, {ErrorCode::BadArgs, "skill management flags cannot be combined with other modes or inputs"}};
+    if (!opts.load_skills.empty() && (!opts.agent && !opts.agent_run))
+        return {opts, {ErrorCode::BadArgs, "--load-skill requires --agent or --run"}};
     return {opts, ok_error()};
 }
 
@@ -1092,7 +1120,7 @@ Error validate_agent_run_arguments(int argc, char** argv, const Options& options
             option == "--run-timeout" ||
             option == "--proxy" || option == "--trusted-prompt-dir" ||
             option == "--max-source-code-file-size" || option == "-r" || option == "--run" ||
-            option == "--run-file";
+            option == "--run-file" || option == "--load-skill";
         if (takes_value) {
             if (equals == std::string::npos) ++i;
             continue;
@@ -1170,7 +1198,7 @@ Error validate_agent_interactive_arguments(int argc, char** argv, const Options&
             option == "--prompt" || option == "--prompt-file" || option == "--theme" ||
             option == "--color-mode" ||
             option == "--max-source-code-file-size" || option == "--load-chat" ||
-            option == "--save-chat";
+            option == "--save-chat" || option == "--load-skill";
         if (takes_value) {
             if (equals == std::string::npos) ++i;
             continue;
@@ -1424,6 +1452,12 @@ Examples:
 Options:
   Mode:
       --list-models             List models from the configured endpoint.
+      --list-skills             List effective user/project skills and locations.
+      --add-skill FOLDER        Copy or update a skill under ~/.ainiux/skills/.
+      --remove-skill NAME       Remove only the named user skill.
+      --load-skill PATH         Load skill instructions explicitly in agent/run
+                                (folder or SKILL.md; repeatable). run never
+                                discovers skills automatically.
       --list-mcp                List installed MCP servers (~/.ainiux/mcp/registry.json).
       --add-mcp/--install-mcp NAME
                                 Install or update an MCP server.

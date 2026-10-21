@@ -146,7 +146,7 @@ The code index maps that same detector (scanner version 7). Corpus:
 
 Do not add compiler-grade parsers, language-server dependencies, reference/call
 graphs, or automatic request-context hints. Security review keeps its immutable
-authorization snapshot. Built-in agent prompt optimization, agent skills, `/loop`,
+authorization snapshot. Built-in agent prompt optimization, `/loop`,
 and sub-agents require separate specifications.
 
 ### Interactive image generation

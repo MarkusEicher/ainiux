@@ -41,6 +41,7 @@ SessionRuntimeOptions make_session_runtime_options(
     options.lane = lane;
     options.allow_network = true;
     options.interactive = interactive;
+    options.load_skills = context.options.load_skills;
     options.enable_session_db = true;
     options.enable_agent_log = context.options.agent_log_enabled;
     options.agent_log_keep_sessions = context.options.agent_log_keep_sessions;
@@ -480,6 +481,12 @@ long long AgentSessionRuntime::estimate_seed_overhead_tokens() const {
         total += estimate_tokens_from_text(agents_md_.injection_text);
         total += 4;
     }
+    // Optional skill catalog and explicitly selected instructions (user-role).
+    if (!skills_injection_.empty()) {
+        total += estimate_tokens_from_text("user");
+        total += estimate_tokens_from_text(skills_injection_);
+        total += 4;
+    }
     // Active agent-lane control (user-role).
     {
         std::vector<std::string> script_names;
@@ -524,6 +531,9 @@ std::vector<std::string> AgentSessionRuntime::context_load_notices() const {
         lines.push_back("AGENTS.md loaded ~" + std::to_string(agents_tokens) +
                         " tokens");
     }
+    if (!skills_injection_.empty())
+        lines.push_back("skills loaded ~" +
+                        std::to_string(estimate_tokens_from_text(skills_injection_)) + " tokens");
     long long tool_tokens = 0;
     std::size_t count = 0;
     for (const provider::FunctionDefinition& definition : tools_.definitions()) {
@@ -722,7 +732,7 @@ void AgentSessionRuntime::rebuild_compacted_conversation(
     std::vector<std::string> script_names;
     (void)list_project_scripts(options_.workspace, script_names);
     seed_agent_conversation(conversation_, prompts_, active_lane_, state_.protocol, "",
-                            agents_md_.injection_text, script_names);
+                            agents_md_.injection_text, script_names, skills_injection_);
     conversation_.messages.push_back(
         {"user", compaction_checkpoint_wrapper(checkpoint)});
     auto append_plain = [&](const CompactionLogicalItem& item) {
@@ -1334,6 +1344,7 @@ void AgentSessionRuntime::reset() {
     tools_ = ReadToolRegistry{};
     prompts_ = TrustedPrompts{};
     agents_md_ = AgentsMdBundle{};
+    skills_injection_.clear();
     conversation_ = provider::ToolConversation{};
     state_ = AgentLoopState{};
     act_lane_ = LaneSnapshot{};
@@ -1496,6 +1507,15 @@ Error AgentSessionRuntime::prepare(const provider::RequestContext& context,
     phase_started = std::chrono::steady_clock::now();
     publish_preparation(PreparationPhase::ToolSetup, false, phase_started);
     ToolRegistryOptions tool_options;
+    SkillCatalog skills;
+    error = load_skills(options_.workspace, options_.interactive, options_.load_skills,
+                        skills, cancellation, interrupted_fn);
+    if (!error.ok()) { reset(); return error; }
+    if (!context.options.quiet)
+        for (const std::string& warning : skills.warnings)
+            std::cerr << "Skill warning: " << redact_secrets(warning, secrets_) << '\n';
+    skills_injection_ = redact_secrets(skills.injection_text(), secrets_);
+    tool_options.skills = std::move(skills);
     tool_options.mutation_policy = MutationPolicy::Full;
     tool_options.allow_network = options_.allow_network;
     tool_options.hosted_web_search = provider::hosted_web_search_enabled(context);
@@ -2733,10 +2753,10 @@ SessionTurnResult AgentSessionRuntime::run_user_turn(
         (void)list_project_scripts(options_.workspace, script_names);
         if (prior_context.empty()) {
             seed_agent_conversation(conversation_, prompts_, active_lane_, state_.protocol, text,
-                                    agents_md_.injection_text, script_names);
+                                    agents_md_.injection_text, script_names, skills_injection_);
         } else {
             seed_agent_conversation(conversation_, prompts_, active_lane_, state_.protocol, "",
-                                    agents_md_.injection_text, script_names);
+                                    agents_md_.injection_text, script_names, skills_injection_);
             conversation_.messages.push_back({"user", prior_context});
             if (!context.options.quiet)
                 std::cerr << "Injected prior agent transcript (" << prior.size()

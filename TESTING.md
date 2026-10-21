@@ -78,6 +78,18 @@ to capture the test's desktop and mobile views for visual inspection.
 
 ## Layout
 
+Skills coverage lives in `tests/unit/agent/test_skills.cpp` and runs with the
+normal unit suite; `build/test_runner --skills-only` isolates it. It covers
+user/project overrides, explicit-only headless loading, metadata and supporting
+files, native/XML prompt seeding, scoped/redacted reads, traversal/link rejection,
+whole-folder installation/update/removal, cancellation and failure cleanup,
+CLI validation/listing, and shared terminal/WebUI runtime selection.
+`tests/integration/test_skills.py` joins the mock smoke target and checks actual
+CLI requests, plain-chat/headless isolation, and automatic WebUI agent catalog
+and supporting-file tool calls against a local mock provider. The filesystem
+fault suite also checks that disk-full skill updates preserve the installed copy
+and release their staging directories and management lock.
+
 - `tests/unit/` — module-oriented C++ unit tests. `test_runner` dispatches `run_all()` from each module directory.
 - `tests/unit/pdf/` — COS reader (tokenizer, xref, Flate, repair) against synthetic PDFs and `tests/pdf_files/`, direct and indirect page-content stream arrays, deterministic rejection of the small `tests/fixtures/pdf_errors/error-*.pdf` malformed/incompatible corpus, PDF-to-Markdown spacing/kerning units (`TJ` word gaps vs letter kerning, DeepSeek whole-word needles), and Markdown-to-PDF writer units (COS round-trip, CropBox=MediaBox, thematic hairlines, coalesced `Tj` lines, CJK/Hebrew/Arabic Identity-H subset embed, Arabic joining and simple bidi, `llm_typical.md` needles, HTML→MD→PDF, PDF→MD→PDF reflow, emoji substitution, empty input, cancellation, table column measurement with word/character wrap, multi-page rows, and a body-line gap after paragraphs and tables).
 - `tests/unit/docx/` and `tests/docx_files/` — bounded ZIP32/ZIP64, OPC relationship/content-type resolution, namespace-aware XML, styles/numbering, document-order blocks, tables, links, fragmented emphasis and complex-script formatting, image/story diagnostics, deterministic Markdown→DOCX output, round-trip stability, cancellation, and malformed/adversarial archive rejection. `--docx-only` runs the group and `--docx-case NAME` isolates a case.

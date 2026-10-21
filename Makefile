@@ -393,8 +393,10 @@ endif
 
 test-integration-smoke: $(BIN)
 	tests/integration/test_mock_smoke.sh
+	python3 tests/integration/test_skills.py
 
 test-integration: $(BIN)
+	python3 tests/integration/test_skills.py
 	tests/integration/test_code_index.sh
 	tests/integration/test_mock_server.sh
 ifeq ($(WINDOWS_NATIVE),0)

@@ -24,6 +24,7 @@ methodology.
 | `symbol` | `query` | Ranked indexed definitions. Hidden without an index. |
 | `outline` | `path` | Declarations in one file. Hidden without an index. |
 | `read` | `path` **or** `items` | One file, or batch 1–100 ranges (`items`); defaults to 128 KiB and returns `next_start_line` when truncated. Images: `attach`. |
+| `skill` | `name` | Read an active skill's `SKILL.md`, or a supporting UTF-8 file using optional relative `path`. Hidden when no skills are active; confined to selected skill directories. |
 | `run` | `command` | Shell-free argv exec. Foreground default and advertised `timeout_ms` maximum are 300 seconds (`[agent] run_timeout_seconds`, CLI `--run-timeout`; `0` disables the timeout). Smart allows validated project commands by default, including Git inspection/staging/ordinary commits/fetch and unfamiliar tools/options; explicit risks and external filesystem access ask. |
 | `fetch` | `url` | HTTP(S) → Markdown/text. Network sessions only. |
 | `web_search` | `term` | At most 3 search hits. Network sessions only. |
@@ -43,7 +44,7 @@ transcripts or Codex-trained muscle memory still run.
 
 Independent tools in one model round share a worker pool of 4 threads by default
 (`[agent] max_parallel_agents`, range 1 through 32). Consecutive
-`read`/`ls`/`glob`/`grep`/`fetch`/`web_search` calls overlap with each other;
+`read`/`skill`/`ls`/`glob`/`grep`/`fetch`/`web_search` calls overlap with each other;
 consecutive `run` calls overlap with each other. Mutations, `index`/`symbol`/`outline`,
 `ask`/`attach`/`goal_met`, and MCP stay exclusive so a later read sees a prior
 edit. Results stay in the model's call order.
