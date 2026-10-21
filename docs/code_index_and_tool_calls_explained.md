@@ -200,12 +200,12 @@ Live workspace walk (`index::discover_workspace_files()`): ignore rules, hidden/
 
 | | |
 | --- | --- |
-| **Params** | `query` (required; `pattern` is a compatibility alias), `regex`, `case_sensitive`, `word`, `path` (one file or directory root), `glob` (name/type filter; combines with `path`), `context` (0–10), `max_results` (def 50, max 500) |
+| **Params** | `query` (required; `pattern` is a compatibility alias), `regex`, `case_sensitive`, `word`, `path` (one file or directory root), `glob` (name/type filter; combines with `path`), `context` (0–25; larger values are clamped), `max_results` (def 50, max 500) |
 | **Backend order** | **1)** system **`rg`** if present; **2)** built-in scan over live workspace files |
 | **Eligible set** | Live `discover_workspace_files()`, size-capped for content search. `path` further restricts to that file or its descendants; `glob` further restricts names/types. They combine. |
 | **`rg` details** | Soft dependency resolved only on the fixed process PATH: `/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin` (not the caller’s `PATH`). Invoked via `run_argv` / `fork`+`execve` (shell-free), with `--no-config`, line-oriented flags, optional `-F`/`-i`/`-w`/`-C`, `--max-filesize`, and a per-file `--max-count`. Hits are **post-filtered** to the live eligible set so ignore/hidden-directory rules match the built-in path. Cancel/timeout apply to the child. |
 | **Fallback** | If `rg` is missing, fails, times out, or exits with status &gt; 1 → portable built-in scanner (open eligible files, `std::string::find` or ECMAScript `std::regex`). Binary/non-UTF-8 files are skipped. May add a short warning; never hard-fails solely because `rg` is absent. |
-| **Portability** | No new library deps (still libcurl + sqlite3). Most Windows machines lack `rg`; they use builtin only. Invalid ECMAScript patterns still return `invalid_regex` before either backend runs. |
+| **Portability** | No new library deps (still libcurl + sqlite3). Most Windows machines lack `rg`; they use builtin only. Explicit `regex=true` invalid ECMAScript patterns still return `invalid_regex` before either backend runs. An omitted `regex` with unescaped `\|` infers regex; if that pattern is invalid, `|` branches are searched as literals. |
 | **Returns** | Array of `{ path, line, text, context?: [{ line, text }] }` |
 | **Metadata** | `search_backend`: `rg` \| `builtin_live` |
 
@@ -226,7 +226,7 @@ Live workspace walk (`index::discover_workspace_files()`): ignore rules, hidden/
 
 | | |
 | --- | --- |
-| **Params** | `path` (required), `start_line` (def 1), `end_line` (def 0 = EOF), `max_bytes` (def 65536, max 262144) |
+| **Params** | `path` (required), `start_line` (def 1), `end_line` (def 0 = EOF), `max_bytes` (def 65536, max 262144). When both lines are set and `end_line` is below `start_line`, the range is swapped with a warning. |
 | **Security-review** | `read_source` → path must be an eligible **indexed** file |
 | **Agent Act/Lead** | `read_workspace_source` → any safe project regular file; **need not be indexed** |
 | **External** | Outside project with Guard approval |

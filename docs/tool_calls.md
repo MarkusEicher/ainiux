@@ -20,10 +20,10 @@ methodology.
 | `index` | — | Index summary (languages, counts, freshness). Hidden without an index. |
 | `ls` | — | Real directory listing. Prefer before `rm`. |
 | `glob` | `pattern` | Live workspace path match for any file type. |
-| `grep` | `query` | Live UTF-8 content search of any file type; `path` + `glob` combine; use `offset` with returned `next_offset` for pagination. |
+| `grep` | `query` | Live UTF-8 content search of any file type; `path` + `glob` combine; use `offset` with returned `next_offset` for pagination. `context` above 25 is clamped. Invalid inferred `\|` patterns search literal branches. |
 | `symbol` | `query` | Ranked indexed definitions. Hidden without an index. |
 | `outline` | `path` | Declarations in one file. Hidden without an index. |
-| `read` | `path` **or** `items` | One file, or batch 1–100 ranges (`items`); defaults to 128 KiB and returns `next_start_line` when truncated. Images: `attach`. |
+| `read` | `path` **or** `items` | One file, or batch 1–100 ranges (`items`); defaults to 128 KiB and returns `next_start_line` when truncated. Inverted `start_line`/`end_line` pairs are swapped with a warning. Images: `attach`. |
 | `skill` | `name` | Read an active skill's `SKILL.md`, or a supporting UTF-8 file using optional relative `path`. Hidden when no skills are active; confined to selected skill directories. |
 | `run` | `command` | Shell-free argv exec. Foreground default and advertised `timeout_ms` maximum are 300 seconds (`[agent] run_timeout_seconds`, CLI `--run-timeout`; `0` disables the timeout). Smart allows validated project commands by default, including Git inspection/staging/ordinary commits/fetch and unfamiliar tools/options; explicit risks and external filesystem access ask. |
 | `fetch` | `url` | HTTP(S) → Markdown/text. Network sessions only. |

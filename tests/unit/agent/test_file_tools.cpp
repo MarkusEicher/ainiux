@@ -975,6 +975,22 @@ void test_write_file_create_and_readback() {
         "read", R"({"path":"src/new_note.md","start_line":1,"end_line":10,"max_bytes":4096})");
     check(json_ok(read), "read_file after write uses updated snapshot: " + read);
 
+    write_text(fs::path(workspace) / "src" / "lines.md",
+               "one\ntwo\nthree\nfour\nfive\n");
+    const std::string inverted = tools.execute(
+        "read",
+        R"JSON({"path":"src/lines.md","start_line":5,"end_line":2})JSON");
+    check(json_ok(inverted) && inverted.find("\"line_start\":2") != std::string::npos &&
+              inverted.find("\"line_end\":5") != std::string::npos &&
+              inverted.find("end_line was before start_line") != std::string::npos,
+          "inverted read range is swapped with a warning: " + inverted);
+    const std::string inverted_item = tools.execute(
+        "read",
+        R"JSON({"items":[{"path":"src/lines.md","start_line":4,"end_line":1}]})JSON");
+    check(json_ok(inverted_item) &&
+              inverted_item.find("end_line was before start_line") != std::string::npos,
+          "inverted batch read range is swapped with a warning: " + inverted_item);
+
     const std::string exists = tools.execute(
         "write",
         R"({"path":"src/new_note.md","content":"nope\n","mode":"create_new"})");
@@ -1118,8 +1134,10 @@ void test_str_replace_exact() {
     const std::string missing = tools.execute(
         "edit",
         R"({"path":"src/hello.cpp","ops":[{"type":"replace_text","old_text":"does-not-exist","new_text":"x"}]})");
-    check(!json_ok(missing) && json_error_code(missing) == "not_found",
-          "missing old_text fails");
+    check(!json_ok(missing) && json_error_code(missing) == "not_found" &&
+              missing.find("does-not-exist") != std::string::npos &&
+              missing.find("(op 1)") != std::string::npos,
+          "missing old_text fails with op preview: " + missing);
 
     const std::string aliased = tools.execute(
         "edit",
@@ -2427,6 +2445,8 @@ void test_grep_uses_rg_when_available_else_builtin() {
                "int delta_marker = 4;\n");
     write_text(fs::path(workspace) / "src" / "notes.md",
                "delta_marker mentioned in markdown\n");
+    write_text(fs::path(workspace) / "src" / "bytes.cpp",
+               "int memory_bytes = 1;\nstruct S { int memory_bytes{2}; };\n");
     agent::index::Options index_options;
     index_options.workspace = fs::canonical(workspace).string();
     agent::index::RefreshStats stats;
@@ -2446,6 +2466,34 @@ void test_grep_uses_rg_when_available_else_builtin() {
     const std::string result = tools.execute(
         "grep",
         R"JSON({"query":"gamma_unique_xyz","max_results":10,"context":1})JSON");
+    const std::string max_context = tools.execute(
+        "grep",
+        R"JSON({"query":"gamma_unique_xyz","max_results":3,"context":25})JSON");
+    check(json_ok(max_context) &&
+              max_context.find("gamma_unique_xyz") != std::string::npos &&
+              max_context.find("argument context clamped") == std::string::npos,
+          "grep accepts context 25: " + max_context);
+    const std::string clamped_context = tools.execute(
+        "grep",
+        R"JSON({"query":"gamma_unique_xyz","max_results":3,"context":40})JSON");
+    check(json_ok(clamped_context) &&
+              clamped_context.find("argument context clamped from 40 to 25") !=
+                  std::string::npos &&
+              clamped_context.find("gamma_unique_xyz") != std::string::npos,
+          "grep clamps context above 25 instead of failing: " + clamped_context);
+    const std::string inferred_invalid = tools.execute(
+        "grep",
+        R"JSON({"query":"memory_bytes =|memory_bytes{","path":"src/bytes.cpp"})JSON");
+    check(json_ok(inferred_invalid) &&
+              inferred_invalid.find("src/bytes.cpp") != std::string::npos &&
+              inferred_invalid.find("memory_bytes") != std::string::npos &&
+              inferred_invalid.find("searched '|' branches as literals") !=
+                  std::string::npos,
+          "invalid inferred regex searches literal | branches: " +
+              inferred_invalid);
+    check(!json_ok(tools.execute(
+              "grep", R"JSON({"query":"(","regex":true,"path":"src/bytes.cpp"})JSON")),
+          "explicit invalid regex still fails");
     check(json_ok(result) &&
               result.find("src/needle.cpp") != std::string::npos &&
               result.find("gamma_unique_xyz") != std::string::npos,

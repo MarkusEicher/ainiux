@@ -2,6 +2,17 @@
 
 These records explain implementation rationale. For current usage, start at the [documentation index](README.md).
 
+## Recover oversize or inverted agent tool arguments (2026-10-21)
+
+DeepSeek Flash sessions send a small share of native tool arguments that look
+plausible and then fail: `grep` `context` above the advertised maximum, inverted
+`read` ranges, and inferred `|` greps that are not valid ECMAScript. `grep`
+`context` advertises 0–25 and clamps larger values with a warning, `read` swaps
+inverted ranges with a warning, and an invalid inferred `|` pattern searches the
+branches as literals. Explicit `regex=true` returns `invalid_regex` for invalid
+patterns. `run` `timeout_ms` above the configured maximum remains
+`invalid_arguments` so the advertised cap is visible.
+
 ## Basic agent skills (2026-10-21)
 
 Terminal and WebUI agents share a directory-based skills catalog: user skills

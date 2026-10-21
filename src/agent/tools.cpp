@@ -228,6 +228,7 @@ bool get_bool(const json::Value& object, const std::string& key, bool fallback, 
 }
 
 constexpr std::size_t kInspectionRunTimeoutMs = 10000;
+constexpr std::size_t kGrepContextMaximum = 25;
 
 std::size_t run_timeout_ms_from_seconds(long seconds) {
     if (seconds <= 0) return 0;
@@ -266,6 +267,67 @@ bool get_size(const json::Value& object, const std::string& key, std::size_t fal
     }
     output = static_cast<std::size_t>(value->number);
     return true;
+}
+
+bool get_clamped_size(const json::Value& object, const std::string& key, std::size_t fallback,
+                      std::size_t maximum, std::size_t& output, std::string& error,
+                      std::string& clamped_warning) {
+    const json::Value* value = object.get(key);
+    if (value == nullptr) {
+        output = fallback;
+        return true;
+    }
+    if (value->type != json::Value::Type::Number || value->number < 0 ||
+        value->number != static_cast<double>(static_cast<unsigned long long>(value->number))) {
+        error = "argument " + key + " must be an integer from 0 through " + std::to_string(maximum);
+        return false;
+    }
+    const auto requested = static_cast<unsigned long long>(value->number);
+    if (requested > maximum) {
+        output = maximum;
+        clamped_warning = "argument " + key + " clamped from " + std::to_string(requested) +
+                          " to " + std::to_string(maximum);
+        return true;
+    }
+    output = static_cast<std::size_t>(requested);
+    return true;
+}
+
+std::string maybe_swap_inverted_line_range(std::size_t& start, std::size_t& end) {
+    if (end == 0 || end >= start) return {};
+    std::swap(start, end);
+    return "end_line was before start_line; swapped to " + std::to_string(start) + "-" +
+           std::to_string(end);
+}
+
+std::string short_tool_preview(const std::string& text, std::size_t max_chars = 80) {
+    std::string preview = text;
+    for (char& ch : preview) {
+        if (ch == '\n' || ch == '\r') ch = ' ';
+    }
+    if (preview.size() > max_chars) preview = preview.substr(0, max_chars) + "...";
+    return preview;
+}
+
+std::string regex_escape_keeping_unescaped_alternation(const std::string& text) {
+    std::string output;
+    bool escaped = false;
+    for (char ch : text) {
+        if (escaped) {
+            output.push_back(ch);
+            escaped = false;
+            continue;
+        }
+        if (ch == '\\') {
+            output.push_back(ch);
+            escaped = true;
+            continue;
+        }
+        if (ch != '|' && std::string(R"(.^$*+?()[]{})").find(ch) != std::string::npos)
+            output.push_back('\\');
+        output.push_back(ch);
+    }
+    return output;
 }
 
 std::string schema(const std::string& properties, const std::string& required = "") {
@@ -3378,7 +3440,10 @@ Error ReadToolRegistry::edit_workspace_file(const std::string& relative_path,
                                  candidate_lines, matches_found);
         if (!match_error.ok()) {
             if (matches_found == 0)
-                return {ErrorCode::FileWrite, "old_text not found for replace_text"};
+                return {ErrorCode::FileWrite,
+                        "old_text not found for replace_text (op " +
+                            std::to_string(op.original_index + 1) + "): \"" +
+                            short_tool_preview(op.old_text) + "\""};
             return match_error;
         }
         std::size_t replacements_made = 0;
@@ -3462,7 +3527,8 @@ std::vector<ToolDescriptor> ReadToolRegistry::native_descriptors() const {
         "\"word\":{\"type\":\"boolean\"},"
         "\"path\":{\"type\":\"string\"},"
         "\"glob\":{\"type\":\"string\"},"
-        "\"context\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":10},"
+        "\"context\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":" +
+        std::to_string(kGrepContextMaximum) + "},"
         "\"max_results\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":500},"
         "\"offset\":{\"type\":\"integer\",\"minimum\":0}";
     std::vector<ToolDescriptor> tools;
@@ -3494,8 +3560,10 @@ std::vector<ToolDescriptor> ReadToolRegistry::native_descriptors() const {
         {"grep",
          "Search live workspace UTF-8 files of any type (rg when available, else scan). "
          "query is literal unless regex=true; unescaped | infers regex only when regex is "
-         "omitted. path=one file or directory root; glob=name/type filter (*.ts, "
-         "**/*.{cpp,hpp,ax}); combine them to search a subtree. pattern aliases query.",
+         "omitted (invalid inferred patterns search '|' branches as literals). context "
+         "above 25 is clamped. path=one file or directory root; glob=name/type filter "
+         "(*.ts, **/*.{cpp,hpp,ax}); combine them to search a subtree. pattern aliases "
+         "query.",
          schema(search_fields, "\"query\"")});
     add(NativeToolHandler::Symbol, ToolSafetyCategory::ReadOnly,
         {"symbol",
@@ -3749,7 +3817,11 @@ Error ReadToolRegistry::read_external_source(const fs::path& absolute_path,
     const std::size_t requested_end_line = end_line == 0 ? lines.size() :
                                            std::min(end_line, lines.size());
     if (end_line == 0) end_line = lines.size();
-    if (start_line > lines.size() || end_line < start_line)
+    if (end_line < start_line)
+        return {ErrorCode::BadArgs,
+                "end_line is before start_line (" + std::to_string(end_line) + " < " +
+                    std::to_string(start_line) + ")"};
+    if (start_line > lines.size())
         return {ErrorCode::BadArgs,
                 "requested line range is outside " + description + ": " + display_path};
     end_line = std::min(end_line, lines.size());
@@ -3977,7 +4049,11 @@ Error ReadToolRegistry::read_source(const std::string& path,
         return ok_error();
     }
     if (end_line == 0) end_line = lines.empty() ? 0 : lines.size();
-    if ((!lines.empty() && start_line > lines.size()) || end_line < start_line)
+    if (end_line < start_line)
+        return {ErrorCode::BadArgs,
+                "end_line is before start_line (" + std::to_string(end_line) + " < " +
+                    std::to_string(start_line) + ")"};
+    if (!lines.empty() && start_line > lines.size())
         return {ErrorCode::BadArgs, "requested line range is outside indexed file: " + record.path};
     end_line = std::min(end_line, lines.size());
     std::string selected;
@@ -4532,6 +4608,7 @@ std::string ReadToolRegistry::execute(const std::string& requested_name,
             !get_size(args, "end_line", 0, 100000000, end, validation_error) ||
             !get_size(args, "max_bytes", 131072, 262144, maximum, validation_error) || maximum == 0)
             return tool_error_result("invalid_arguments", validation_error.empty() ? "max_bytes must be positive" : validation_error);
+        const std::string inverted_range_warning = maybe_swap_inverted_line_range(start, end);
         SourceRange range;
         Error error;
         if (retired_project_script_path(path)) {
@@ -4600,6 +4677,7 @@ std::string ReadToolRegistry::execute(const std::string& requested_name,
         if (range.truncated_lines > 0)
             data.object["truncated_lines"] = number_value(range.truncated_lines);
         std::vector<std::string> warnings;
+        if (!inverted_range_warning.empty()) warnings.push_back(inverted_range_warning);
         if (range.redacted) warnings.push_back("configured credential value was redacted");
         if (range.truncated_lines > 0)
             warnings.push_back("one or more returned lines were shortened to 2000 UTF-8 characters");
@@ -4682,6 +4760,9 @@ std::string ReadToolRegistry::execute(const std::string& requested_name,
                 item_maximum == 0) {
                 warnings.push_back("omitted item " + std::to_string(index) + ": " + validation_error); truncated = true; continue;
             }
+            const std::string inverted_range_warning = maybe_swap_inverted_line_range(start, end);
+            if (!inverted_range_warning.empty())
+                warnings.push_back("item " + std::to_string(index) + ": " + inverted_range_warning);
             const std::size_t effective_maximum =
                 std::min(remaining, item_maximum);
             SourceRange range;
@@ -4728,6 +4809,7 @@ std::string ReadToolRegistry::execute(const std::string& requested_name,
         std::string query, pattern, path, glob;
         bool regex_mode = false, case_sensitive = false, word = false;
         std::size_t context = 0, maximum = 50, offset = 0;
+        std::string context_clamped_warning;
         if (!get_string(args, "query", query, false, validation_error) ||
             !get_string(args, "pattern", pattern, false, validation_error) ||
             !get_string(args, "path", path, false, validation_error) ||
@@ -4736,7 +4818,8 @@ std::string ReadToolRegistry::execute(const std::string& requested_name,
             !get_bool(args, "case_sensitive", false, case_sensitive,
                       validation_error) ||
             !get_bool(args, "word", false, word, validation_error) ||
-            !get_size(args, "context", 0, 10, context, validation_error) ||
+            !get_clamped_size(args, "context", 0, kGrepContextMaximum, context,
+                              validation_error, context_clamped_warning) ||
             !get_size(args, "max_results", 50, 500, maximum, validation_error) ||
             !get_size(args, "offset", 0, 100000000, offset, validation_error))
             return tool_error_result("invalid_arguments", validation_error);
@@ -4764,19 +4847,32 @@ std::string ReadToolRegistry::execute(const std::string& requested_name,
         if (inferred_regex) regex_mode = true;
         std::regex expression;
         const bool use_regex = regex_mode || word;
+        std::string inferred_regex_warning;
         // Validate ECMAScript patterns even when ripgrep will run, so invalid
         // regex still returns a structured error and portable fallback stays ready.
+        auto compile_query_regex = [&](const std::string& pattern) {
+            std::string built = regex_mode ? pattern : regex_escape(pattern);
+            if (word) built = "\\b(?:" + built + ")\\b";
+            expression = std::regex(
+                built,
+                std::regex::ECMAScript |
+                    (case_sensitive ? std::regex::flag_type{} : std::regex::icase));
+        };
         if (use_regex) {
             try {
-                std::string built = regex_mode ? query : regex_escape(query);
-                if (word) built = "\\b(?:" + built + ")\\b";
-                expression = std::regex(
-                    built,
-                    std::regex::ECMAScript |
-                        (case_sensitive ? std::regex::flag_type{}
-                                        : std::regex::icase));
+                compile_query_regex(query);
             } catch (const std::regex_error& exception) {
-                return tool_error_result("invalid_regex", exception.what());
+                if (!inferred_regex)
+                    return tool_error_result("invalid_regex", exception.what());
+                try {
+                    query = regex_escape_keeping_unescaped_alternation(query);
+                    compile_query_regex(query);
+                    inferred_regex_warning =
+                        std::string("inferred regex was invalid (") + exception.what() +
+                        "); searched '|' branches as literals";
+                } catch (const std::regex_error& retry) {
+                    return tool_error_result("invalid_regex", retry.what());
+                }
             }
         }
         const std::string literal_query =
@@ -4824,9 +4920,13 @@ std::string ReadToolRegistry::execute(const std::string& requested_name,
         std::vector<std::string> warnings;
         bool truncated = false;
         std::size_t skipped = 0;
+        if (!context_clamped_warning.empty())
+            warnings.push_back(context_clamped_warning);
         if (inferred_regex)
             warnings.push_back(
                 "regex=true inferred because query contains an unescaped '|'");
+        if (!inferred_regex_warning.empty())
+            warnings.push_back(inferred_regex_warning);
         else if (!regex_mode && has_unescaped_alternation(query))
             warnings.push_back(
                 "regex=false was explicit; query was searched literally, including '|'");
