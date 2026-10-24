@@ -4741,6 +4741,7 @@ app::EditorRunResult run_editor(const std::string& path,
             minibuffer_message(minibuffer, state.redo() ? "Redone" : "Nothing to redo");
         } else if (ch == 1) {
             state.select_all();
+            minibuffer_message(minibuffer, "Selected all");
         } else if (ch == 11) {
             const std::uint64_t before = state.revision();
             Error kill_error = state.kill_to_line_end(shared_clipboard());

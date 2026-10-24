@@ -91,11 +91,12 @@ Dead same-host lock owners are recovered automatically. Remote, live, malformed,
 | Key | Action |
 |-----|--------|
 | `Ctrl+C` | Copy selection |
-| `Ctrl+V` | Paste (internal clipboard first, then desktop/OSC 52 clipboard) |
+| `Ctrl+V` | Paste (internal clipboard first, then desktop/OSC 52 clipboard). CR, LF, and CRLF become one newline |
 | `Ctrl+K` | Kill to end of line |
 | `Ctrl+Z` or `Ctrl+U` | Undo |
 | `Ctrl+Y` | Redo |
 | `Ctrl+A` | Select all (entire buffer) |
+| Arrow keys | Move by visual row (soft wrap), keeping the preferred column |
 | `Home` | Beginning of line |
 | `End` | End of line |
 | `Ctrl+Home` | Beginning of buffer |
@@ -109,14 +110,16 @@ Dead same-host lock owners are recovered automatically. Remote, live, malformed,
 There is no dedicated cut key (`Ctrl+X` is the window-command prefix). Delete a
 selection with Backspace or Delete to place it on the clipboard, then paste with
 `Ctrl+V`. Copy, selection-delete, and line kill retain text in Ainiux's
-process-wide clipboard and also publish it through the native Windows clipboard,
-a desktop helper on POSIX, and OSC 52 when available. With an empty internal
-clipboard, `Ctrl+V` uses `CF_UNICODETEXT` on Windows or reads asynchronously from
-`pbpaste`, `wl-paste`, `xclip`, `xsel`, Termux, or WSL. SSH
-sessions query the terminal first. Reads are limited to 16 MiB and are applied
-only if the buffer, cursor, selection, and input mode have not changed. Terminal
-bracketed paste remains the fallback when clipboard access is unavailable or
-denied.
+process-wide clipboard (shared with chat and agent in the same process) and also
+publish it through the native Windows clipboard, a desktop helper on POSIX, and
+OSC 52 when available. With an empty internal clipboard, `Ctrl+V` uses
+`CF_UNICODETEXT` on Windows or reads asynchronously from `pbpaste`, `wl-paste`,
+`xclip`, `xsel`, Termux, or WSL. SSH sessions query the terminal first. Reads
+are limited to 16 MiB and are applied only if the buffer, cursor, selection, and
+input mode have not changed. Pasted text from the clipboard, a helper, OSC 52,
+or bracketed terminal paste converts CR, LF, and CRLF to a single newline.
+Terminal bracketed paste remains the fallback when clipboard access is
+unavailable or denied.
 
 ## Selection
 
@@ -367,7 +370,7 @@ Chat and agent TUI history do **not** expose `/width`, `/left-align`, `/right-al
 - `tab-style` — fallback `spaces` or `tab` style (default `spaces`)
 - `linebreak` — default `lf`, `cr`, or `crlf` for new, empty, no-ending, and mixed-ending files (default `lf`)
 
-`[input] auto-convert-html-to-md` controls `/insert URL` and defaults to `on`. URL insertion accepts only HTTP(S), retains the existing private-address, proxy, timeout, TLS, content-type, and response-size protections, and converts fetched HTML to UTF-8 from the declared charset. Set it to `off` to insert raw HTML. Local `/insert` accepts every file ending. UTF-8 and confident UTF-16 load automatically; unlabeled 8-bit text needs `--encoding NAME` on the CLI. Opening such a file in the editor asks for an encoding (or **Open as-is**). Converted buffers save as UTF-8. NUL-containing binary, unreadable, and oversized content is still rejected. CR and CRLF are normalized to the editor's internal LF representation and use the buffer's chosen linebreak mode when saved.
+`[input] auto-convert-html-to-md` controls `/insert URL` and defaults to `on`. URL insertion accepts only HTTP(S), retains the existing private-address, proxy, timeout, TLS, content-type, and response-size protections, and converts fetched HTML to UTF-8 from the declared charset. Set it to `off` to insert raw HTML. Local `/insert` accepts every file ending. UTF-8 and confident UTF-16 load automatically; unlabeled 8-bit text needs `--encoding NAME` on the CLI. Opening such a file in the editor asks for an encoding (or **Open as-is**). Converted buffers save as UTF-8. NUL-containing binary, unreadable, and oversized content is still rejected. CR and CRLF are normalized to the editor's internal LF representation on file load, `/insert`, clipboard paste, and bracketed terminal paste, and use the buffer's chosen linebreak mode when saved.
 
 User shell (`shell` / `/shell` / `!` / `shell-stdout` / `/shell-stdout` / `!!`) runs `/bin/sh -c` on POSIX or built-in Windows PowerShell 5.1 (`-NoLogo -NoProfile -NonInteractive`, encoded command, UTF-8 output) on Windows. In the editor the leading `/` is optional (as with other commands). Every form opens a **new buffer** containing pure stdout only; the minibuffer shows success (exit, elapsed ms, byte count) or a clear failure (exit/stderr snippet). Esc cancels an in-flight shell job. Unlike chat/agent, `shell-stdout` is not draft-fill here—both forms use the new-buffer path.
 

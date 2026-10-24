@@ -1,6 +1,7 @@
 #include "editor/selection.hpp"
 
 #include <cctype>
+#include <limits>
 
 namespace ainiux::editor {
 
@@ -169,20 +170,18 @@ bool parse_csi_movement(const std::string& body, MovementKeyEvent& out) {
 }
 
 bool movement_key_from_codepoint(int codepoint, MovementKey& out) {
+    // Kitty CSI-u functional keys. CSI 1~ / 4~ / 5~ / 6~ Home/End/Page
+    // identities belong to the tilde parser; codepoint 1 is Ctrl+A.
     switch (codepoint) {
-        case 1:
         case 57360:
             out = MovementKey::Home;
             return true;
-        case 4:
         case 57361:
             out = MovementKey::End;
             return true;
-        case 5:
         case 57362:
             out = MovementKey::PageUp;
             return true;
-        case 6:
         case 57363:
             out = MovementKey::PageDown;
             return true;
@@ -202,23 +201,49 @@ bool parse_kitty_modifier_value(int modifier, bool& shift, bool& alt, bool& ctrl
     return true;
 }
 
+bool parse_csi_field(const std::string& text, size_t& pos, int& out) {
+    if (pos >= text.size() || !std::isdigit(static_cast<unsigned char>(text[pos]))) {
+        return false;
+    }
+    int value = 0;
+    while (pos < text.size() && std::isdigit(static_cast<unsigned char>(text[pos]))) {
+        const int digit = text[pos] - '0';
+        if (value > (std::numeric_limits<int>::max() - digit) / 10) {
+            return false;
+        }
+        value = value * 10 + digit;
+        ++pos;
+    }
+    out = value;
+    return true;
+}
+
 bool parse_kitty_csi_u_body(const std::string& body, MovementKeyEvent& out) {
     if (body.empty() || body.back() != 'u') {
         return false;
     }
     const std::string inner = body.substr(0, body.size() - 1);
-    const size_t semi = inner.find(';');
+    size_t pos = 0;
     int codepoint = 0;
     int modifier = 1;
-    if (semi == std::string::npos) {
-        if (!parse_positive_int(inner, codepoint)) {
+    int event_type = 1;
+    if (!parse_csi_field(inner, pos, codepoint)) {
+        return false;
+    }
+    if (pos < inner.size() && inner[pos] == ';') {
+        ++pos;
+        if (!parse_csi_field(inner, pos, modifier)) {
             return false;
         }
-    } else {
-        if (!parse_positive_int(inner.substr(0, semi), codepoint) ||
-            !parse_positive_int(inner.substr(semi + 1), modifier)) {
+    }
+    if (pos < inner.size() && inner[pos] == ':') {
+        ++pos;
+        if (!parse_csi_field(inner, pos, event_type)) {
             return false;
         }
+    }
+    if (event_type == 3) {
+        return false;
     }
 
     MovementKey movement;

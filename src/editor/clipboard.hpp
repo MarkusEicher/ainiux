@@ -23,6 +23,10 @@ class Clipboard {
 
 Clipboard& shared_clipboard();
 
+// Convert CR, CRLF, and LF to a single LF. Editor buffers and the process
+// clipboard store LF only; file save still emits the buffer linebreak mode.
+std::string normalize_newlines_to_lf(std::string text);
+
 constexpr size_t kExternalClipboardReadLimit = 16U * 1024U * 1024U;
 constexpr int kClipboardHelperTimeoutMs = 2000;
 

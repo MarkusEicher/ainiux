@@ -4904,6 +4904,7 @@ app::TuiRunResult run(provider::RequestContext context,
                 }
                 if (ch == 1) {
                     input.select_all();
+                    status = "Selected all";
                     continue;
                 }
                 if (ch == 0 && mode == TuiMode::Chat &&

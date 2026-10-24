@@ -104,6 +104,7 @@ SystemClipboardResult run_helper(const ClipboardCommand& command,
         result.message = "system clipboard exceeds the 16 MiB text limit";
         return result;
     }
+    result.text = normalize_newlines_to_lf(std::move(result.text));
     if (result.text.empty()) {
         result.error = SystemClipboardError::Empty;
         result.message = "system clipboard contains no text";
@@ -204,20 +205,6 @@ class ClipboardGuard {
     bool open_ = false;
 };
 
-std::string normalize_clipboard_lf(std::string text) {
-    std::size_t write = 0;
-    for (std::size_t read = 0; read < text.size(); ++read) {
-        if (text[read] == '\r') {
-            if (read + 1 < text.size() && text[read + 1] == '\n') ++read;
-            text[write++] = '\n';
-        } else {
-            text[write++] = text[read];
-        }
-    }
-    text.resize(write);
-    return text;
-}
-
 std::string clipboard_crlf(const std::string& text) {
     std::string output;
     output.reserve(text.size() + text.size() / 16U);
@@ -281,7 +268,7 @@ SystemClipboardResult read_windows_clipboard(runtime::CancellationToken token) {
         result.message = conversion.message;
         return result;
     }
-    result.text = normalize_clipboard_lf(std::move(result.text));
+    result.text = normalize_newlines_to_lf(std::move(result.text));
     if (result.text.size() > kExternalClipboardReadLimit) {
         result.text.clear();
         result.error = SystemClipboardError::TooLarge;
@@ -357,8 +344,23 @@ SystemClipboardResult write_windows_clipboard(const std::string& text,
 
 }  // namespace
 
+std::string normalize_newlines_to_lf(std::string text) {
+    if (text.find('\r') == std::string::npos) return text;
+    std::size_t write = 0;
+    for (std::size_t read = 0; read < text.size(); ++read) {
+        if (text[read] == '\r') {
+            if (read + 1 < text.size() && text[read + 1] == '\n') ++read;
+            text[write++] = '\n';
+        } else {
+            text[write++] = text[read];
+        }
+    }
+    text.resize(write);
+    return text;
+}
+
 void Clipboard::set(std::string text) {
-    text_ = std::move(text);
+    text_ = normalize_newlines_to_lf(std::move(text));
 }
 
 void Clipboard::clear() {
@@ -532,8 +534,9 @@ void ClipboardRuntime::cancel_read() {
 
 void ClipboardRuntime::cancel_all() {
     read_job_.cancel();
-    write_job_.cancel();
     read_job_.join();
+    // Finish an in-flight copy so Ctrl+C still reaches the desktop clipboard
+    // when leaving editor, chat, or agent.
     write_job_.join();
     events_.close();
 }

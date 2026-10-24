@@ -106,6 +106,39 @@ bool ctrl_byte_from_codepoint(int codepoint, unsigned char& out) {
     return false;
 }
 
+bool parse_csi_field(const std::string& text, size_t& pos, int& out) {
+    if (pos >= text.size() || !std::isdigit(static_cast<unsigned char>(text[pos]))) {
+        return false;
+    }
+    int value = 0;
+    while (pos < text.size() && std::isdigit(static_cast<unsigned char>(text[pos]))) {
+        const int digit = text[pos] - '0';
+        if (value > (std::numeric_limits<int>::max() - digit) / 10) {
+            return false;
+        }
+        value = value * 10 + digit;
+        ++pos;
+    }
+    out = value;
+    return true;
+}
+
+bool parse_csi_u_fields(const std::string& inner, int& codepoint, int& modifier, int& event_type) {
+    size_t pos = 0;
+    if (!parse_csi_field(inner, pos, codepoint)) return false;
+    modifier = 1;
+    event_type = 1;
+    if (pos < inner.size() && inner[pos] == ';') {
+        ++pos;
+        if (!parse_csi_field(inner, pos, modifier)) return false;
+    }
+    if (pos < inner.size() && inner[pos] == ':') {
+        ++pos;
+        if (!parse_csi_field(inner, pos, event_type)) return false;
+    }
+    return true;
+}
+
 bool read_bracketed_paste_body(std::string& out) {
     out.clear();
     static constexpr char kEnd[] = "\x1b[201~";
@@ -260,13 +293,13 @@ bool decode_control_key_sequence(const std::string& sequence, unsigned char& out
         out = 27;
         return true;
     }
-    if (sequence.size() >= 4 && sequence[0] == '[' && sequence.back() == 'u') {
-        const size_t semi = sequence.find(';');
-        if (semi != std::string::npos && semi > 1) {
-            int codepoint = 0;
-            int modifier = 0;
-            if (!parse_positive_int(sequence.substr(1, semi - 1), codepoint) ||
-                !parse_positive_int(sequence.substr(semi + 1, sequence.size() - semi - 2), modifier)) {
+    if (sequence.size() >= 3 && sequence[0] == '[' && sequence.back() == 'u') {
+        const std::string inner = sequence.substr(1, sequence.size() - 2);
+        int codepoint = 0;
+        int modifier = 1;
+        int event_type = 1;
+        if (parse_csi_u_fields(inner, codepoint, modifier, event_type)) {
+            if (event_type == 3) {
                 return false;
             }
             if (codepoint == 27 && modifier == 1) {
@@ -281,19 +314,25 @@ bool decode_control_key_sequence(const std::string& sequence, unsigned char& out
                 out = editor_key_backtab();
                 return true;
             }
-            if (!is_ctrl_modifier(modifier)) {
-                return false;
+            if (is_ctrl_modifier(modifier)) {
+                if (has_alt_modifier(modifier) && (codepoint == 'T' || codepoint == 't' ||
+                                                   codepoint == 20)) {
+                    out = editor_key_toggle_thinking_traces();
+                    return true;
+                }
+                if (has_shift_modifier(modifier) && (codepoint == 'S' || codepoint == 's')) {
+                    out = editor_key_save_as();
+                    return true;
+                }
+                return ctrl_byte_from_codepoint(codepoint, out);
             }
-            if (has_alt_modifier(modifier) && (codepoint == 'T' || codepoint == 't' ||
-                                               codepoint == 20)) {
-                out = editor_key_toggle_thinking_traces();
+            // Terminals may report the control character as the CSI-u codepoint
+            // with the default modifier. Codepoint 1 is Ctrl+A, not Home.
+            if (codepoint >= 1 && codepoint <= 26) {
+                out = static_cast<unsigned char>(codepoint);
                 return true;
             }
-            if (has_shift_modifier(modifier) && (codepoint == 'S' || codepoint == 's')) {
-                out = editor_key_save_as();
-                return true;
-            }
-            return ctrl_byte_from_codepoint(codepoint, out);
+            return false;
         }
     }
     if (sequence.size() >= 6 && sequence[0] == '[' && sequence.back() == '~' &&

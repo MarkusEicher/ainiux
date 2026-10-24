@@ -215,7 +215,7 @@ struct EditorState {
     // chat/help modes. Shared ownership keeps one logical buffer lock alive;
     // EditorFileLock remains the sole owner responsible for directory cleanup.
     std::shared_ptr<EditorFileLock> file_lock;
-    VerticalMovementMode vertical_movement = VerticalMovementMode::LogicalLine;
+    VerticalMovementMode vertical_movement = VerticalMovementMode::VisualRow;
     EditorMode mode = EditorMode::Editor;
     Selection selection;
     highlight::Language language = highlight::Language::Text;

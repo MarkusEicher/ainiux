@@ -13,6 +13,16 @@
 
 namespace ainiux::editor {
 
+namespace {
+
+const std::string& lf_newlines(const std::string& value, std::string& storage) {
+    if (value.find('\r') == std::string::npos) return value;
+    storage = normalize_newlines_to_lf(value);
+    return storage;
+}
+
+}  // namespace
+
 using detail::WrapSegment;
 using detail::WrappedLocation;
 using detail::cursor_in_wrapped_line;
@@ -279,18 +289,20 @@ Error EditorState::insert(const std::string& value) {
         }
         return replaced;
     }
+    std::string normalized;
+    const std::string& inserted = lf_newlines(value, normalized);
     EditorSnapshot before = snapshot();
     const size_t insert_position = cursor;
-    Error err = text.insert(cursor, value);
+    Error err = text.insert(cursor, inserted);
     if (!err.ok()) {
         return err;
     }
-    word_index_.apply_edit(before.content, insert_position, 0, value);
+    word_index_.apply_edit(before.content, insert_position, 0, inserted);
     remember_undo(std::move(before));
-    cursor += value.size();
+    cursor += inserted.size();
     ++revision_;
     dirty = true;
-    record_autosave_change(value.size());
+    record_autosave_change(inserted.size());
     update_preferred_column(*this);
     return ok_error();
 }
@@ -301,11 +313,13 @@ Error EditorState::insert_without_undo(const std::string& value) {
     if (value.empty()) {
         return ok_error();
     }
-    Error err = text.insert(cursor, value);
+    std::string normalized;
+    const std::string& inserted = lf_newlines(value, normalized);
+    Error err = text.insert(cursor, inserted);
     if (!err.ok()) {
         return err;
     }
-    cursor += value.size();
+    cursor += inserted.size();
     ++revision_;
     // Streaming writes can arrive in many small chunks. Rebuild lazily on the
     // next completion instead of repeatedly materializing the whole piece table.
@@ -347,8 +361,10 @@ Error EditorState::replace_completion(size_t pos,
         return {ErrorCode::BadArgs, "editor replace position is past the end of the buffer"};
     }
     count = std::min(count, text.size() - pos);
+    std::string normalized;
+    const std::string& inserted = lf_newlines(value, normalized);
     const std::string before_text = text.str();
-    if (before_text.substr(pos, count) == value) {
+    if (before_text.substr(pos, count) == inserted) {
         return ok_error();
     }
 
@@ -358,20 +374,20 @@ Error EditorState::replace_completion(size_t pos,
     if (!err.ok()) {
         return err;
     }
-    err = replacement.insert(pos, value);
+    err = replacement.insert(pos, inserted);
     if (!err.ok()) {
         return err;
     }
     text = std::move(replacement);
-    word_index_.apply_edit(before_text, pos, count, value);
+    word_index_.apply_edit(before_text, pos, count, inserted);
     if (record_undo) {
         remember_undo(std::move(before));
     }
-    cursor = pos + value.size();
+    cursor = pos + inserted.size();
     ++revision_;
     selection.clear(cursor);
     dirty = true;
-    record_autosave_change(count + value.size());
+    record_autosave_change(count + inserted.size());
     update_preferred_column(*this);
     return ok_error();
 }

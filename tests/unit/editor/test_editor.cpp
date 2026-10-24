@@ -379,6 +379,14 @@ void test_system_clipboard_helpers() {
         ed::read_system_clipboard(environment, source.token());
     check(read.ok() && read.text == std::string("first\nsecond \316\251"),
           "clipboard helper preserves exact multiline Unicode text");
+    write_clipboard_helper(directory, "wl-paste", "printf 'one\\r\\ntwo\\rthree\\n'");
+    read = ed::read_system_clipboard(environment, source.token());
+    check(read.ok() && read.text == "one\ntwo\nthree\n",
+          "clipboard helper normalizes CR and CRLF to LF");
+    write_clipboard_helper(directory, "wl-paste", "printf 'first\\nsecond \316\251'");
+    read = ed::read_system_clipboard(environment, source.token());
+    check(read.ok() && read.text == std::string("first\nsecond \316\251"),
+          "clipboard helper still reads LF text after a CRLF fixture");
     {
         ed::ClipboardRuntime runtime;
         const std::uint64_t generation = runtime.start_read(environment);
@@ -3189,6 +3197,16 @@ void test_editor_movement_sequence_parse() {
     check(ainiux::editor::parse_movement_sequence("[57360;3u", event) && !event.shift && event.alt &&
               event.key == ainiux::editor::MovementKey::Home,
           "kitty Alt+Home sequence parses");
+    check(ainiux::editor::parse_movement_sequence("[57360;5:1u", event) && event.ctrl &&
+              event.key == ainiux::editor::MovementKey::Home,
+          "kitty Ctrl+Home CSI-u with event type parses");
+    check(!ainiux::editor::parse_movement_sequence("[1;5u", event),
+          "kitty Ctrl+A CSI-u is not Home");
+    check(!ainiux::editor::parse_movement_sequence("[1u", event),
+          "CSI-u codepoint 1 is not Home");
+    check(ainiux::editor::parse_movement_sequence("[1~", event) &&
+              event.key == ainiux::editor::MovementKey::Home,
+          "CSI 1~ remains Home");
 }
 
 void test_editor_select_all() {
@@ -3202,6 +3220,63 @@ void test_editor_select_all() {
     check(state.selection.end() == state.text.size(), "select all ends at the end of the buffer");
     check(state.cursor == state.text.size(), "select all moves the cursor to the end of the buffer");
     check(state.selected_text() == "alpha\nbeta\ngamma", "select all selects the full buffer");
+}
+
+void test_normalize_newlines_to_lf() {
+    using ainiux::editor::normalize_newlines_to_lf;
+    check(normalize_newlines_to_lf("a\r\nb") == "a\nb", "CRLF becomes one LF");
+    check(normalize_newlines_to_lf("a\rb") == "a\nb", "lone CR becomes one LF");
+    check(normalize_newlines_to_lf("a\nb") == "a\nb", "LF is unchanged");
+    check(normalize_newlines_to_lf("a\r\nb\rc\n") == "a\nb\nc\n",
+          "mixed CR, CRLF, and LF each become one LF");
+    check(normalize_newlines_to_lf("no breaks") == "no breaks",
+          "text without line breaks is unchanged");
+}
+
+void test_editor_paste_normalizes_newlines() {
+    ainiux::editor::EditorState state = ainiux::editor::EditorState::from_text("head");
+    state.cursor = state.text.size();
+    ainiux::editor::Clipboard clipboard;
+    clipboard.set("one\r\ntwo\rthree\n");
+    check(clipboard.text() == "one\ntwo\nthree\n",
+          "clipboard stores CR/CRLF as LF");
+    check(state.paste(clipboard).ok(), "paste of CRLF clipboard succeeds");
+    check(state.text.str() == "headone\ntwo\nthree\n",
+          "paste inserts a single LF for CR, CRLF, and LF");
+    check(state.cursor == state.text.size(), "paste cursor follows the normalized text");
+    check(state.undo() && state.text.str() == "head", "normalized paste is one undoable edit");
+
+    check(state.insert("a\r\nb\rc").ok(), "insert normalizes CR and CRLF");
+    check(state.text.str() == "heada\nb\nc", "insert stores LF line breaks");
+}
+
+void test_shared_clipboard_copy_paste_between_buffers() {
+    ainiux::editor::shared_clipboard().clear();
+    ainiux::editor::EditorState editor =
+        ainiux::editor::EditorState::from_text("from editor\nline 2");
+    editor.select_all();
+    check(editor.copy_selection(ainiux::editor::shared_clipboard()).ok(),
+          "editor copy fills the process clipboard");
+    check(ainiux::editor::shared_clipboard().text() == "from editor\nline 2",
+          "process clipboard keeps editor LF text");
+
+    ainiux::editor::EditorState agent_input = ainiux::editor::EditorState::from_text("");
+    check(ainiux::editor::paste_with_clipboard_preference(
+              agent_input, ainiux::editor::shared_clipboard(), "ignored-external")
+              .ok(),
+          "agent/chat paste prefers the process clipboard");
+    check(agent_input.text.str() == "from editor\nline 2",
+          "agent/chat input receives the editor copy");
+
+    ainiux::editor::EditorState chat_input = ainiux::editor::EditorState::from_text("prompt ");
+    chat_input.cursor = chat_input.text.size();
+    ainiux::editor::Clipboard empty;
+    check(ainiux::editor::paste_with_clipboard_preference(chat_input, empty, "ext\r\nline")
+              .ok(),
+          "empty internal clipboard pastes external text");
+    check(chat_input.text.str() == "prompt ext\nline",
+          "external paste into chat/agent input normalizes CRLF");
+    ainiux::editor::shared_clipboard().clear();
 }
 
 void test_editor_line_home_end_navigation() {
@@ -4777,14 +4852,16 @@ void test_editor_utf8_codepoint_navigation_and_editing() {
 void test_editor_vertical_navigation_modes() {
     ainiux::editor::Rect rect{1, 1, 3, 4};
     ainiux::editor::EditorState logical = ainiux::editor::EditorState::from_text("abcdefghij\nXYZ");
+    logical.vertical_movement = ainiux::editor::VerticalMovementMode::LogicalLine;
     logical.cursor = logical.text.offset_for_line_column(0, 2);
     logical.preferred_column = 2;
     logical.move_down(rect);
     check(logical.cursor == logical.text.offset_for_line_column(1, 2),
-          "editor default vertical movement uses logical lines");
+          "editor logical vertical movement uses hard lines");
 
     ainiux::editor::EditorState visual = ainiux::editor::EditorState::from_text("abcdefghij\nXYZ");
-    visual.vertical_movement = ainiux::editor::VerticalMovementMode::VisualRow;
+    check(visual.vertical_movement == ainiux::editor::VerticalMovementMode::VisualRow,
+          "editor default vertical movement is visual row");
     visual.cursor = visual.text.offset_for_line_column(0, 2);
     visual.preferred_column = 2;
     visual.move_down(rect);
@@ -4905,7 +4982,49 @@ void test_editor_control_key_sequence_decode() {
           "editor decodes xterm modifyOtherKeys Shift+Tab as backtab");
     check(!ainiux::editor::decode_control_key_sequence("[A", decoded),
           "editor ignores arrow-key escape sequences");
+    check(ainiux::editor::decode_control_key_sequence("[97;5u", decoded) && decoded == 1,
+          "kitty Ctrl+A (codepoint a) decodes to select-all");
+    check(ainiux::editor::decode_control_key_sequence("[1;5u", decoded) && decoded == 1,
+          "kitty Ctrl+A (codepoint 1) decodes to select-all");
+    check(ainiux::editor::decode_control_key_sequence("[1u", decoded) && decoded == 1,
+          "short CSI-u codepoint 1 decodes to select-all");
+    check(ainiux::editor::decode_control_key_sequence("[97;5:1u", decoded) && decoded == 1,
+          "kitty Ctrl+A with press event type decodes to select-all");
+    check(ainiux::editor::decode_control_key_sequence("[27;5;97~", decoded) && decoded == 1,
+          "xterm modifyOtherKeys Ctrl+A decodes to select-all");
+    check(!ainiux::editor::decode_control_key_sequence("[97;5:3u", decoded),
+          "kitty Ctrl+A key-release is ignored");
+    check(!ainiux::editor::decode_control_key_sequence("[1~", decoded),
+          "CSI 1~ Home is not decoded as a control byte");
+    check(ainiux::editor::decode_control_key_sequence("[99;5u", decoded) && decoded == 3,
+          "kitty Ctrl+C (codepoint c) decodes to copy");
+    check(ainiux::editor::decode_control_key_sequence("[118;5u", decoded) && decoded == 22,
+          "kitty Ctrl+V (codepoint v) decodes to paste");
 
+    ainiux::editor::clear_terminal_input_queue();
+    ainiux::editor::push_terminal_input_bytes("\x1b[97;5u");
+    ainiux::editor::TerminalInputEvent ctrl_a;
+    check(ainiux::editor::read_terminal_input(ctrl_a, 0) &&
+              ctrl_a.type == ainiux::editor::TerminalInputType::Byte && ctrl_a.byte == 1,
+          "terminal input delivers kitty Ctrl+A as select-all");
+    ainiux::editor::clear_terminal_input_queue();
+    ainiux::editor::push_terminal_input_bytes("\x1b[1;5u");
+    check(ainiux::editor::read_terminal_input(ctrl_a, 0) &&
+              ctrl_a.type == ainiux::editor::TerminalInputType::Byte && ctrl_a.byte == 1,
+          "terminal input delivers CSI-u codepoint 1 with Ctrl as select-all");
+    ainiux::editor::clear_terminal_input_queue();
+    ainiux::editor::push_terminal_input_bytes("\x1b[1u");
+    check(ainiux::editor::read_terminal_input(ctrl_a, 0) &&
+              ctrl_a.type == ainiux::editor::TerminalInputType::Byte && ctrl_a.byte == 1,
+          "terminal input delivers short CSI-u codepoint 1 as select-all");
+    ainiux::editor::clear_terminal_input_queue();
+    ainiux::editor::push_terminal_input_bytes("\x1b[99;5u\x1b[118;5u");
+    check(ainiux::editor::read_terminal_input(ctrl_a, 0) &&
+              ctrl_a.type == ainiux::editor::TerminalInputType::Byte && ctrl_a.byte == 3,
+          "terminal input delivers kitty Ctrl+C as copy");
+    check(ainiux::editor::read_terminal_input(ctrl_a, 0) &&
+              ctrl_a.type == ainiux::editor::TerminalInputType::Byte && ctrl_a.byte == 22,
+          "terminal input delivers kitty Ctrl+V as paste");
     ainiux::editor::clear_terminal_input_queue();
     ainiux::editor::push_terminal_input_bytes("\x1b[27u/");
     ainiux::editor::TerminalInputEvent event;
@@ -6094,6 +6213,9 @@ void run_all() {
     test_editor_language_reformatting();
     test_editor_home_end_navigation();
     test_editor_select_all();
+    test_normalize_newlines_to_lf();
+    test_editor_paste_normalizes_newlines();
+    test_shared_clipboard_copy_paste_between_buffers();
     test_editor_line_home_end_navigation();
     test_editor_wrapped_line_home_end_navigation();
     test_editor_invalid_utf8_rendering_is_sanitized();

@@ -140,6 +140,16 @@ def main():
         if text != "bracketed\npaste":
             raise AssertionError("bracketed terminal paste regressed")
 
+        text, _ = editor_case(
+            binary,
+            root,
+            environment,
+            "",
+            [(b"\x1b[200~line1\r\nline2\rline3\n\x1b[201~", 0.25)],
+        )
+        if text != "line1\nline2\nline3\n":
+            raise AssertionError(f"bracketed CRLF/CR paste was not normalized: {text!r}")
+
         osc_environment = environment.copy()
         osc_environment.pop("WAYLAND_DISPLAY", None)
         osc_environment["PATH"] = "/no/clipboard/helpers"

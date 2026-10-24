@@ -25,9 +25,9 @@ for terminal-native selection. Clipboard shortcuts use `CF_UNICODETEXT` directly
 
 | Shortcut | Action |
 |----------|--------|
-| `Ctrl+A` | Select entire input buffer |
+| `Ctrl+A` | Select the entire input box (not the chat thread) |
 | `Ctrl+C` | Copy input selection; with no selection, copy the last user/assistant message |
-| `Ctrl+V` | Paste (internal clipboard first, then desktop/OSC 52 clipboard) |
+| `Ctrl+V` | Paste (internal clipboard first, then desktop/OSC 52 clipboard). CR, LF, and CRLF become one newline |
 | `Ctrl+K` | Kill from cursor to end of line |
 | `Ctrl+Z` or `Ctrl+U` | Undo last edit (typing, delete, cut, paste) |
 | `Ctrl+Y` | Redo |
@@ -35,7 +35,7 @@ for terminal-native selection. Clipboard shortcuts use `CF_UNICODETEXT` directly
 | `Delete` | Delete at cursor (with a selection: cut to clipboard) |
 | `Tab` | Slash-command/format completion (start of first line) or path completion after `/insert`, `/attach`, `/import`, or an `/export` format |
 
-Copy and selection-delete (Backspace/Delete on a range) publish to native desktop helpers and OSC 52 when available. With no input selection, `Ctrl+C` copies the last user/assistant message from the stored transcript, preserving its original newlines and excluding soft-wrap padding, labels, and scrollbar glyphs. This is the reliable way to copy history from full-screen terminal clients whose mouse selection copies painted screen rows. With an empty internal clipboard, `Ctrl+V` reads external text asynchronously; SSH prefers a terminal OSC 52 query. Bracketed terminal paste (middle-click or Shift+Insert in many terminals) remains the fallback and is also undoable with `Ctrl+Z` / `Ctrl+U`. There is no dedicated cut key; delete the selection with Backspace or Delete, then paste with `Ctrl+V`.
+Copy and selection-delete (Backspace/Delete on a range) publish to native desktop helpers and OSC 52 when available. The same process-wide clipboard is shared with editor and agent, so `Ctrl+C` in one mode and `Ctrl+V` in another pastes that text. With no input selection, `Ctrl+C` copies the last user/assistant message from the stored transcript, preserving its original newlines and excluding soft-wrap padding, labels, and scrollbar glyphs. This is the reliable way to copy history from full-screen terminal clients whose mouse selection copies painted screen rows. With an empty internal clipboard, `Ctrl+V` reads external text asynchronously; SSH prefers a terminal OSC 52 query. Incoming paste converts CR, LF, and CRLF to one newline. Bracketed terminal paste (middle-click or Shift+Insert in many terminals) remains the fallback and is also undoable with `Ctrl+Z` / `Ctrl+U`. There is no dedicated cut key; delete the selection with Backspace or Delete, then paste with `Ctrl+V`.
 
 The mouse wheel scrolls one rendered visual row per event. Chat and agent scroll only while the pointer is over history (or the visible help panel); the editor scrolls only the focused pane's content and does not move the caret. Native terminal selection may require `Shift+drag` while full-screen mouse reporting is active.
 
@@ -163,11 +163,11 @@ Press `Ctrl+E`, `Esc`, or `Alt+X` to open the command minibuffer. `Ctrl+E` is th
 
 | Shortcut | Action |
 |----------|--------|
-| `Ctrl+C` / `Ctrl+V` | Copy / paste |
+| `Ctrl+C` / `Ctrl+V` | Copy / paste (internal clipboard first; CR, LF, and CRLF become one newline) |
 | `Ctrl+K` | Kill to end of line |
 | `Ctrl+Z` or `Ctrl+U` | Undo last edit (typing, delete, cut, paste) |
 | `Ctrl+Y` | Redo |
-| `Ctrl+A` | Select all |
+| `Ctrl+A` | Select all (entire buffer) |
 | `Backspace` | Delete before cursor (with a selection: cut to clipboard) |
 | `Delete` | Delete at cursor (with a selection: cut to clipboard) |
 | `Enter` | Insert newline |
@@ -203,7 +203,7 @@ slash. Chat and agent modes use `/chat`, `/agent`, and `/editor`.
 
 | Shortcut | Action |
 |----------|--------|
-| Arrow keys | Move cursor (**logical-line** up/down) |
+| Arrow keys | Move cursor (visual-row up/down, keeping the preferred column) |
 | `Shift` + arrows | Extend selection |
 | `Home` / `End` | Beginning / end of **current line** |
 | `Ctrl+Home` / `Ctrl+End` | Beginning / end of **buffer** |
@@ -250,9 +250,11 @@ Also: `/provider`, `/model`, `/search QUERY`
 ## `--agent` mode
 
 Agent mode shares the terminal input editor, scrolling, provider/model/reasoning
-pickers, and cancellation keys with chat. Its transcript and tools are
-project-local under `.ainiux-pr/`; ordinary chat thread commands are not agent
-session management.
+pickers, and cancellation keys with chat. `Ctrl+A` selects the composer only, not
+the agent transcript. `Ctrl+C` / `Ctrl+V` use the same process-wide clipboard as
+chat and editor, including copies from the editor and pastes from external apps.
+Its transcript and tools are project-local under `.ainiux-pr/`; ordinary chat
+thread commands are not agent session management.
 
 | Shortcut | Action |
 |----------|--------|
@@ -302,7 +304,6 @@ Use `/chat`, `/editor`, `/agent`, or `/mode` for explicit mode handoffs.
 | `Ctrl+B` / `Ctrl+D` | Scroll chat history back / forward | Page up / down in the other split pane |
 | `Alt+PageUp` / `Alt+PageDown` | Scroll chat history (if terminal allows) | **Unused** |
 | `Tab` | Command/path completion | Word/path/command completion or indentation |
-| `↑` / `↓` | Visual-row movement (soft wrap) | Logical-line movement |
 
 ## Browser Chat and Agent composers
 

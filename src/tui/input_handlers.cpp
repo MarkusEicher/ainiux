@@ -350,6 +350,12 @@ EscapeResult handle_escape(editor::EditorState& input,
         if (editor::is_dired_f4_sequence(sequence)) {
             return EscapeResult::OpenDired;
         }
+        unsigned char decoded = 0;
+        if (editor::decode_control_key_sequence(sequence, decoded) && decoded >= 1 &&
+            decoded <= 26) {
+            editor::push_terminal_input_bytes(std::string(1, static_cast<char>(decoded)));
+            return EscapeResult::Handled;
+        }
         editor::MovementKeyEvent movement;
         if (editor::parse_movement_sequence(sequence, movement)) {
             apply_alt_meta_prefix(movement, alt_meta_prefix);

@@ -426,12 +426,13 @@ Error paste_into_minibuffer(MinibufferState& minibuffer, const std::string& text
             return {ErrorCode::BadArgs, "paste is not accepted by the active prompt"};
     }
 
-    size_t end = text.size();
-    while (end > 0 && (text[end - 1] == '\r' || text[end - 1] == '\n')) {
+    std::string normalized = normalize_newlines_to_lf(text);
+    size_t end = normalized.size();
+    while (end > 0 && (normalized[end - 1] == '\r' || normalized[end - 1] == '\n')) {
         --end;
     }
     for (size_t index = 0; index < end; ++index) {
-        const unsigned char ch = static_cast<unsigned char>(text[index]);
+        const unsigned char ch = static_cast<unsigned char>(normalized[index]);
         if (ch == '\r' || ch == '\n' || ch == '\0') {
             return {ErrorCode::BadArgs, "minibuffer paste must contain exactly one line"};
         }
@@ -440,7 +441,7 @@ Error paste_into_minibuffer(MinibufferState& minibuffer, const std::string& text
         }
     }
     try {
-        minibuffer.input.append(text, 0, end);
+        minibuffer.input.append(normalized, 0, end);
     } catch (const std::bad_alloc&) {
         return {ErrorCode::Internal, "not enough memory to paste into the minibuffer"};
     } catch (const std::length_error&) {
